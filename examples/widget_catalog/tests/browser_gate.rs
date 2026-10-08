@@ -31,6 +31,18 @@
 //! on the canvas is also dispatched: the app must still be logging no
 //! `pageerror` afterwards.
 //!
+//! The page runs with a test-injected stylesheet that stretches the
+//! canvas's layout box to 2200×1300, so the device-pixel content box
+//! reported to winit exceeds the WebGL2 `max_texture_dimension_2d`
+//! floor of 2048 — the regression where `Surface::configure` failed
+//! validation and the subsequent `get_current_texture` panicked.
+//! (Headless SwiftShader does not emulate `devicePixelContentBoxSize`
+//! through `deviceScaleFactor`, so the oversize comes from CSS, not
+//! DPR.) The gate asserts the console shows no `maximum supported
+//! texture size` validation error and no panic markers, and that the
+//! pixel assertion still passes (a clamped backing store upscaled by
+//! the browser paints identically at the compositor).
+//!
 //! # Manual equivalent
 //!
 //! Build + serve per README "Web (wasm32)", open the page in a
@@ -298,7 +310,11 @@ const launchArgs = {
   // TinySkia path, which is the only backend that can present here.
   args: [
     '--no-sandbox',
-    '--use-gl=swiftshader',
+    // `--use-angle=swiftshader` is the current spelling of the old
+    // `--use-gl=swiftshader` (retired upstream — on Chromium ≥ ~120 the
+    // GL backend picker rejects it, the GPU process exits, and the
+    // browser never signals readiness on the debugging pipe).
+    '--use-angle=swiftshader',
     '--enable-unsafe-swiftshader',
   ],
   ...(candidates.length ? { executablePath: candidates[0] } : {}),
@@ -309,7 +325,33 @@ var roleCount = 0;
 var pageErrors = [];
 var distinctBytes = -1;
 try {
-  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  // Force the canvas's layout box past the WebGL2 texture-extent
+  // floor (2048) — the deployed-site regression this gate covers. The
+  // stylesheet pins `#martensite-canvas` to 1280×860 with
+  // `max-width/max-height: 100v*`, and headless SwiftShader does not
+  // emulate `devicePixelContentBoxSize` through `deviceScaleFactor`,
+  // so the oversize has to come from CSS itself. `addInitScript` runs
+  // at document-start, before the wasm entry point and winit's
+  // ResizeObserver first tick. With the clamp in place the surface
+  // configures at or below the device limit and the browser upscales
+  // the backing store.
+  const page = await browser.newPage({ viewport: { width: 2400, height: 1500 } });
+  await page.addInitScript(() => {
+    const inject = () => {
+      const style = document.createElement('style');
+      style.textContent =
+        '#martensite-canvas { width: 2200px !important; height: 1300px !important; ' +
+        'max-width: none !important; max-height: none !important; }';
+      (document.head || document.documentElement).appendChild(style);
+    };
+    // `addInitScript` evaluates at document-start, when
+    // `documentElement` may not exist yet; deferring to
+    // DOMContentLoaded still lands the rule long before the wasm
+    // module has fetched/instantiated and winit's ResizeObserver
+    // reads the box.
+    if (document.documentElement) inject();
+    else document.addEventListener('DOMContentLoaded', inject, { once: true });
+  });
   page.on('console', (m) => logs.push(m.text()));
   page.on('pageerror', (e) => {
     logs.push(`pageerror: ${e}`);
@@ -366,6 +408,9 @@ try {
       // while a blank/unpainted canvas is a single flat color.
       const shot = await page.screenshot({
         type: 'png',
+        // SwiftShader rasterizes a >2048-px canvas on the CPU — the
+        // compositor needs a generous capture budget here.
+        timeout: 120000,
         clip: {
           x: Math.floor(box.x),
           y: Math.floor(box.y),
@@ -400,6 +445,22 @@ if (roleCount < 10) {
 }
 if (distinctBytes < 8) {
   failures.push(`canvas screenshot decoded to ${distinctBytes} distinct byte values — expected painted widgets, got a blank/uniform canvas`);
+}
+// The oversize-viewport regression: a `Surface::configure` extent past
+// the device's `max_texture_dimension_2d` logged this validation error
+// and the follow-on `get_current_texture` panicked (cascading into
+// winit-web's `RefCell already borrowed`). All three markers must be
+// absent — `pageerror` coverage alone misses the wgpu error because it
+// arrives via `console.error`, not an exception.
+const forbidden = [
+  'maximum supported texture size',
+  'not configured for presentation',
+  'RefCell already borrowed',
+];
+for (const marker of forbidden) {
+  if (joined.includes(marker)) {
+    failures.push(`console contains ${marker}`);
+  }
 }
 if (pageErrors.length) {
   failures.push(`page errors: ${pageErrors.join(' | ')}`);

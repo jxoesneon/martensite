@@ -312,6 +312,37 @@ pub fn spawn_app(
     event_loop.run_app(app)
 }
 
+/// Backing-store extent ceiling applied by
+/// [`sync_canvas_backing_store`]: the WebGL2 mandatory
+/// `MAX_TEXTURE_SIZE` minimum — the smallest
+/// `max_texture_dimension_2d` a wgpu downlevel-webgl2 device can ever
+/// report. The canvas backing store doubles as the presentation
+/// surface once wgpu configures it, so an oversized bitmap becomes a
+/// surface-validation failure; clamping here keeps the *initial* sync
+/// (which runs before a device exists) inside every possible limit.
+/// Once a GPU device lands, `Surface::configure` re-derives the real
+/// bound. The CSS size is unaffected — the browser upscales the
+/// smaller bitmap to the layout box.
+pub const CANVAS_BACKING_STORE_LIMIT: u32 = 2048;
+
+/// Scales `(width, height)` down proportionally so neither dimension
+/// exceeds `limit` (which is clamped to ≥ 1). Companion to
+/// `martensite_wgpu::surface::clamp_extent` — duplicated here rather
+/// than imported because `martensite-window` does not depend on the
+/// GPU crate.
+fn clamp_to_limit(width: u32, height: u32, limit: u32) -> (u32, u32) {
+    let limit = limit.max(1);
+    let longest = width.max(height);
+    if longest <= limit {
+        return (width, height);
+    }
+    let scale = f64::from(limit) / f64::from(longest);
+    (
+        (f64::from(width) * scale).floor().max(1.0) as u32,
+        (f64::from(height) * scale).floor().max(1.0) as u32,
+    )
+}
+
 /// Sizes a canvas's backing store to `logical * scale_factor` physical
 /// pixels while keeping the CSS size in logical pixels.
 ///
@@ -322,7 +353,10 @@ pub fn spawn_app(
 /// the manual conversion so rendered content stays sharp on HiDPI
 /// displays.
 ///
-/// Values are rounded to the nearest physical pixel and clamped to ≥ 1.
+/// Values are rounded to the nearest physical pixel, clamped to ≥ 1,
+/// and clamped *proportionally* to [`CANVAS_BACKING_STORE_LIMIT`] per
+/// axis — see its docs for why the pre-device sync cannot exceed the
+/// WebGL2 floor.
 ///
 /// # Examples
 ///
@@ -343,6 +377,8 @@ pub fn sync_canvas_backing_store(
 ) {
     let physical_width = (f64::from(logical_width) * scale_factor).round().max(1.0) as u32;
     let physical_height = (f64::from(logical_height) * scale_factor).round().max(1.0) as u32;
+    let (physical_width, physical_height) =
+        clamp_to_limit(physical_width, physical_height, CANVAS_BACKING_STORE_LIMIT);
     canvas.set_width(physical_width);
     canvas.set_height(physical_height);
     let style = canvas.style();

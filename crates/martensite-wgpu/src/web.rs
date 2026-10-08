@@ -263,6 +263,53 @@ pub fn device_descriptor_for(backend: WebBackend) -> wgpu::DeviceDescriptor<'sta
     }
 }
 
+/// The largest 2D texture extent worth requesting for presentation:
+/// the WebGPU default limit. Canvases beyond this fall back to the
+/// clamped-backing-store path in
+/// [`clamp_extent`](crate::surface::clamp_extent).
+const MAX_WEB_SURFACE_EXTENT: u32 = 8192;
+
+/// Returns the [`wgpu::DeviceDescriptor`] for `backend` with the 2D
+/// texture extent raised to `adapter`'s real capability.
+///
+/// [`device_descriptor_for`] only knows the backend, so on
+/// [`WebBackend::WebGl2`] it must request
+/// [`wgpu::Limits::downlevel_webgl2_defaults`] — whose
+/// `max_texture_dimension_2d` is the WebGL2 mandatory minimum (2048).
+/// wgpu validates `Surface::configure` against the *requested* device
+/// limits, not the adapter's, so a HiDPI canvas whose CSS×DPR box
+/// exceeds 2048 cannot be presented even though virtually every real
+/// GL context supports 8192+. When the adapter is known — i.e. every
+/// actual `request_device` call — prefer this variant: the raise is
+/// clamped to the adapter's own reported limit (and to
+/// `MAX_WEB_SURFACE_EXTENT`), so the request can never be refused for
+/// exceeding hardware capability.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite_wgpu::web::{device_descriptor_for_adapter, WebBackend};
+///
+/// # fn example(adapter: &martensite_wgpu::wgpu::Adapter) {
+/// let desc = device_descriptor_for_adapter(WebBackend::WebGl2, adapter);
+/// # let _ = desc;
+/// # }
+/// ```
+#[must_use]
+pub fn device_descriptor_for_adapter(
+    backend: WebBackend,
+    adapter: &wgpu::Adapter,
+) -> wgpu::DeviceDescriptor<'static> {
+    let mut desc = device_descriptor_for(backend);
+    if matches!(backend, WebBackend::WebGl2) {
+        desc.required_limits.max_texture_dimension_2d = adapter
+            .limits()
+            .max_texture_dimension_2d
+            .min(MAX_WEB_SURFACE_EXTENT);
+    }
+    desc
+}
+
 /// Requests a surface-compatible (or bare) adapter on a web instance and
 /// returns the [`GpuContext`] together with the [`WebBackend`] that was
 /// actually selected.
@@ -310,7 +357,7 @@ pub async fn gpu_context_for_web(
     let backend = classify_adapter(&adapter_info);
 
     let (device, queue) = adapter
-        .request_device(&device_descriptor_for(backend))
+        .request_device(&device_descriptor_for_adapter(backend, &adapter))
         .await
         .map_err(|e| GpuContextError::DeviceRequestFailed(e.to_string()))?;
 

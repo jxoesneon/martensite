@@ -114,6 +114,43 @@ pub enum PresentModePreference {
     LowLatency,
 }
 
+/// Returns `(width, height)` scaled down proportionally so neither
+/// dimension exceeds `limit`, preserving the aspect ratio.
+///
+/// A presentation surface's extent must fit within the device's
+/// [`wgpu::Limits::max_texture_dimension_2d`]: `Surface::configure`
+/// validates against it, and because wgpu reports that failure through
+/// the uncaptured-error sink rather than a return value, the surface
+/// stays unconfigured and the next `get_current_texture` *panics*.
+/// Downlevel WebGL2 devices on the web can cap at 2048 while a HiDPI
+/// canvas's CSS size × `devicePixelRatio` easily exceeds it — clamping
+/// the extent here keeps `configure` valid on every device; the
+/// browser then upscales the smaller backing store to the canvas's
+/// layout box, so the only cost is softness. A `limit` of `0` is
+/// treated as `1`.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_wgpu::surface::clamp_extent;
+///
+/// assert_eq!(clamp_extent(800, 600, 8192), (800, 600));
+/// assert_eq!(clamp_extent(2520, 1320, 2048), (2048, 1072));
+/// ```
+#[must_use]
+pub fn clamp_extent(width: u32, height: u32, limit: u32) -> (u32, u32) {
+    let limit = limit.max(1);
+    let longest = width.max(height);
+    if longest <= limit {
+        return (width, height);
+    }
+    let scale = f64::from(limit) / f64::from(longest);
+    (
+        (f64::from(width) * scale).floor().max(1.0) as u32,
+        (f64::from(height) * scale).floor().max(1.0) as u32,
+    )
+}
+
 /// The low-latency preference order used when `PresentModePreference::LowLatency`
 /// is selected. The wrapper tries each mode in turn and selects the first one
 /// advertised by the surface's [`wgpu::SurfaceCapabilities`].
@@ -317,6 +354,12 @@ impl<'window> SurfaceWrapper<'window> {
     /// The supplied `backdrop` is stored so that a subsequent
     /// [`SurfaceWrapper::resize`] reuses the same alpha mode.
     ///
+    /// `width`/`height` are clamped to the device's
+    /// `max_texture_dimension_2d` via [`clamp_extent`] — an oversize
+    /// extent would otherwise fail wgpu validation silently and leave
+    /// the surface unconfigured. The stored configuration (and
+    /// `canvas.width`/`height` on the web) reflect the clamped extent.
+    ///
     /// # Errors
     ///
     /// Returns [`SurfaceWrapperError::InvalidDimensions`] if either dimension is zero.
@@ -342,6 +385,12 @@ impl<'window> SurfaceWrapper<'window> {
         if width == 0 || height == 0 {
             return Err(SurfaceWrapperError::InvalidDimensions);
         }
+        // Clamp to the device's texture extent *before* calling
+        // `Surface::configure`: an oversize configure only surfaces as
+        // an uncaptured wgpu error and leaves the surface unconfigured,
+        // so the following `get_current_texture` would panic. See
+        // [`clamp_extent`].
+        let (width, height) = clamp_extent(width, height, device.limits().max_texture_dimension_2d);
 
         let caps = self.surface.get_capabilities(adapter);
         let format = caps
@@ -415,7 +464,9 @@ impl<'window> SurfaceWrapper<'window> {
     /// This is the resize re-creation path: it updates the stored configuration
     /// in place and re-issues [`wgpu::Surface::configure`]. The alpha mode set
     /// by the most recent [`SurfaceWrapper::configure`] (via the supplied
-    /// [`BackdropMode`]) is carried over unchanged.
+    /// [`BackdropMode`]) is carried over unchanged. `width`/`height` are
+    /// clamped to the device's `max_texture_dimension_2d` via
+    /// [`clamp_extent`].
     ///
     /// # Errors
     ///
@@ -442,6 +493,10 @@ impl<'window> SurfaceWrapper<'window> {
         if width == 0 || height == 0 {
             return Err(SurfaceWrapperError::InvalidDimensions);
         }
+        // Same pre-`configure` clamp as [`SurfaceWrapper::configure`] —
+        // an oversize extent would only surface as an uncaptured wgpu
+        // error and leave `get_current_texture` panicking.
+        let (width, height) = clamp_extent(width, height, device.limits().max_texture_dimension_2d);
         let mut config = self
             .config
             .clone()
@@ -460,6 +515,13 @@ impl<'window> SurfaceWrapper<'window> {
     /// the [`wgpu::CurrentSurfaceTexture`] variants (e.g. `Outdated` should
     /// trigger a [`SurfaceWrapper::resize`] or reconfigure).
     ///
+    /// When the wrapper has never been configured, `get_current_texture`
+    /// panics ("surface is not configured for presentation") instead of
+    /// returning a status. The guard below maps that case to the
+    /// transient [`wgpu::CurrentSurfaceTexture::Outdated`] so callers
+    /// route it through the recovery machine's reconfigure path rather
+    /// than crashing the event loop.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -473,6 +535,9 @@ impl<'window> SurfaceWrapper<'window> {
     /// ```
     #[must_use]
     pub fn acquire_frame(&self) -> wgpu::CurrentSurfaceTexture {
+        if self.config.is_none() {
+            return wgpu::CurrentSurfaceTexture::Outdated;
+        }
         self.surface.get_current_texture()
     }
 }
@@ -504,6 +569,24 @@ mod tests {
             PresentModePreference::default(),
             PresentModePreference::Standard
         );
+    }
+
+    #[test]
+    fn clamp_extent_preserves_in_limit_and_scales_oversize() {
+        // At or under the limit: passthrough.
+        assert_eq!(clamp_extent(800, 600, 2048), (800, 600));
+        assert_eq!(clamp_extent(2048, 2048, 2048), (2048, 2048));
+        // Oversize on the long axis: proportional downscale, the long
+        // axis lands exactly on the limit and aspect is preserved.
+        let (w, h) = clamp_extent(2520, 1320, 2048);
+        assert_eq!(w, 2048);
+        assert!(h < 1320 && h > 0);
+        // Oversize on both axes.
+        let (w, h) = clamp_extent(3000, 5000, 1000);
+        assert_eq!((w, h), (600, 1000));
+        // Degenerate limits still produce usable extents.
+        assert_eq!(clamp_extent(10, 10, 0), (1, 1));
+        assert!(clamp_extent(0, 4000, 100).1 <= 100);
     }
 
     #[test]

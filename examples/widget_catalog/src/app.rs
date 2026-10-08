@@ -421,13 +421,35 @@ impl App {
     /// Last laid-out viewport size — the headless path relayouts to it
     /// every frame.
     fn layout_size(&self) -> (u32, u32) {
-        self.window
+        let (w, h) = self
+            .window
             .as_ref()
             .map(|w| {
                 let s = w.surface_size();
                 (s.width, s.height)
             })
-            .unwrap_or(self.headless_size)
+            .unwrap_or(self.headless_size);
+        self.clamped_surface_size(w, h)
+    }
+
+    /// Clamps a physical extent to the GPU's
+    /// `max_texture_dimension_2d` (proportionally, preserving aspect).
+    ///
+    /// WebGL2-class web devices may cap the surface extent far below a
+    /// HiDPI canvas's CSS×DPR box (2048 is the mandatory minimum);
+    /// laying out and rasterizing at the clamped extent keeps the
+    /// paint list, the CPU raster buffer, and the swapchain the same
+    /// size — the browser upscales the backing store to the canvas's
+    /// layout box. Without a GPU there is no surface to constrain.
+    fn clamped_surface_size(&self, width: u32, height: u32) -> (u32, u32) {
+        match &self.gpu {
+            Some(gpu) => martensite_wgpu::surface::clamp_extent(
+                width,
+                height,
+                gpu.device.limits().max_texture_dimension_2d,
+            ),
+            None => (width, height),
+        }
     }
 
     /// Lets the [`CatalogView`] drain its controls, signals, and
@@ -533,8 +555,18 @@ impl App {
         let (gpu, instance, raw_surface, prefer_cpu) = self.web_init.borrow_mut().take_gpu();
         self._web_instance = instance;
         let size = window.surface_size();
-        let w = size.width.max(1);
-        let h = size.height.max(1);
+        // Clamp the surface extent to the device's texture limit —
+        // WebGL2 adapters may cap `max_texture_dimension_2d` well below
+        // the canvas's CSS×DPR box; `Surface::configure` would fail
+        // validation silently and `get_current_texture` would panic.
+        let (w, h) = match &gpu {
+            Some(gpu) => martensite_wgpu::surface::clamp_extent(
+                size.width.max(1),
+                size.height.max(1),
+                gpu.device.limits().max_texture_dimension_2d,
+            ),
+            None => (size.width.max(1), size.height.max(1)),
+        };
         if let (Some(gpu), Some(raw_surface)) = (gpu, raw_surface) {
             let mut surface = SurfaceWrapper::new(raw_surface);
             surface.set_pacing(PresentModePreference::LowLatency);
@@ -597,7 +629,12 @@ impl App {
                         gpu.device = Arc::new(device);
                         gpu.queue = Arc::new(queue);
                         let size = window.surface_size();
-                        match surface.resize(&gpu.device, size.width.max(1), size.height.max(1)) {
+                        let (w, h) = martensite_wgpu::surface::clamp_extent(
+                            size.width.max(1),
+                            size.height.max(1),
+                            gpu.device.limits().max_texture_dimension_2d,
+                        );
+                        match surface.resize(&gpu.device, w, h) {
                             Ok(()) => {
                                 self.recovery.retry_succeeded();
                                 self.recovery.restore_completed();
@@ -631,8 +668,9 @@ impl App {
         let adapter = Arc::clone(&gpu.adapter);
         // The surviving adapter re-issues a logical device against the
         // same limit contract the bootstrap probe negotiated.
-        let desc = martensite_wgpu::web::device_descriptor_for(
+        let desc = martensite_wgpu::web::device_descriptor_for_adapter(
             martensite_wgpu::web::classify_adapter(&gpu.adapter_info),
+            &adapter,
         );
         let slot = Rc::clone(&self.web_device_retry);
         martensite_web::wasm_bindgen_futures::spawn_local(async move {
@@ -774,11 +812,10 @@ impl App {
                     // Non-transient errors entered the recovery path;
                     // on the web `pump_web_device_recovery` drives the
                     // async re-request each frame.
+                    let size = window.surface_size();
+                    let (w, h) = self.clamped_surface_size(size.width.max(1), size.height.max(1));
                     if let (Some(surface), Some(gpu)) = (&mut self.surface, &self.gpu) {
-                        let size = window.surface_size();
-                        if let Err(err) =
-                            surface.resize(&gpu.device, size.width.max(1), size.height.max(1))
-                        {
+                        if let Err(err) = surface.resize(&gpu.device, w, h) {
                             eprintln!("widget_catalog: surface resize failed: {err}");
                         }
                     }
@@ -889,13 +926,16 @@ impl App {
                 BackdropMode::Opaque,
             )
             .expect("configure surface");
+        // The stored configuration carries the effective extent —
+        // `configure` clamps to the device's `max_texture_dimension_2d`.
+        let (w, h) = surface
+            .configuration()
+            .map(|config| (config.width, config.height))
+            .unwrap_or((1, 1));
         let prefer_cpu = std::env::var("MARTENSITE_CPU").is_ok();
-        let mut orchestrator = RenderOrchestrator::new(
-            size.width.max(1),
-            size.height.max(1),
-            OrchestratorConfig::new(true, prefer_cpu),
-        )
-        .expect("orchestrator");
+        let mut orchestrator =
+            RenderOrchestrator::new(w, h, OrchestratorConfig::new(true, prefer_cpu))
+                .expect("orchestrator");
         let notify_window = Arc::clone(&window);
         orchestrator.set_pre_present_notify(Some(Box::new(move || {
             notify_window.pre_present_notify();
@@ -904,7 +944,7 @@ impl App {
         // Arena + initial a11y tree — all before show.
         self.build_arena(window.scale_factor() as f32);
         self.needs_layout = true;
-        self.layout(size.width.max(1), size.height.max(1));
+        self.layout(w, h);
 
         let root = self.root.expect("arena built");
         let mut tree = AccessKitAdapter::new(root);
@@ -1037,15 +1077,20 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested | WindowEvent::Destroyed => event_loop.exit(),
             WindowEvent::SurfaceResized(size) => {
                 // winit-web reports the canvas's device-pixel content box:
-                // `size` is already physical — reconfigure with it as-is.
+                // `size` is already physical — reconfigure with it as-is,
+                // clamped to the device's texture extent (a HiDPI canvas
+                // can exceed a downlevel adapter's
+                // `max_texture_dimension_2d`; the browser upscales the
+                // smaller backing store to the CSS layout box).
                 if size.width > 0 && size.height > 0 {
+                    let (w, h) = self.clamped_surface_size(size.width, size.height);
                     if let (Some(surface), Some(gpu)) = (&mut self.surface, &self.gpu) {
-                        if let Err(err) = surface.resize(&gpu.device, size.width, size.height) {
+                        if let Err(err) = surface.resize(&gpu.device, w, h) {
                             eprintln!("widget_catalog: surface resize failed: {err}");
                         }
                     }
                     if let Some(o) = &mut self.orchestrator {
-                        o.set_frame_size(size.width, size.height);
+                        o.set_frame_size(w, h);
                     }
                     self.needs_layout = true;
                 }
@@ -1182,10 +1227,11 @@ impl ApplicationHandler for App {
                 let dt = Duration::from_secs_f64(((now - self.last_frame_ms) / 1000.0).max(0.0));
                 self.last_frame_ms = now;
                 if self.needs_layout {
-                    if let Some(window) = &self.window {
-                        let size = window.surface_size();
-                        self.layout(size.width, size.height);
-                    }
+                    // `layout_size` clamps to the device's texture
+                    // extent so the paint list always fits the
+                    // swapchain (see `clamped_surface_size`).
+                    let (w, h) = self.layout_size();
+                    self.layout(w, h);
                     self.needs_layout = false;
                 }
                 self.frame(dt);
