@@ -39,7 +39,7 @@ Add `martensite-theme` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-theme = "0.21.0"
+martensite-theme = "0.21.1"
 ```
 
 Computing perceptual contrast in Oklab:

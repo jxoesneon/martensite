@@ -34,7 +34,7 @@ Add `martensite-window` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-window = "0.21.0"
+martensite-window = "0.21.1"
 ```
 
 Managing fractional DPI scaling:

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-08
+
+### Fixed — Web Surface Extents
+
+- **WebGL2 oversize-surface crash** — `Surface::configure` validates the
+  requested extent against the device's `max_texture_dimension_2d`, but
+  reports failure only through wgpu's uncaptured-error sink: the surface
+  stayed unconfigured and the next `get_current_texture` panicked,
+  cascading into a winit-web `RefCell` borrow panic. Downlevel WebGL2
+  adapters can cap the extent at 2048 while a HiDPI canvas's CSS×DPR box
+  exceeds it (observed: 2520×1320 at DPR 2). `SurfaceWrapper::configure`
+  and `resize` now clamp the extent proportionally via the new public
+  `clamp_extent` helper, `acquire_frame` returns the transient
+  `Outdated` surface error when unconfigured so the recovery path
+  reconfigures instead of panicking, and the WebGL2 device descriptor
+  raises its texture-extent request to `min(adapter limit, 8192)` — the
+  downlevel default only knows the backend floor and undersold real GL
+  contexts. The canvas backing store is clamped to the WebGL2 mandatory
+  floor before a device exists; CSS size is untouched, so the browser
+  upscales the smaller bitmap to the layout box (the only cost is
+  softness on capped adapters). The widget catalog's browser gate now
+  exercises an oversize canvas (2200×1300) and asserts the absence of
+  the validation/panic markers.
+
 ## [0.21.0] - 2026-10-07
 
 ### Added — Widget Catalog, Dev Channel, Icons & Internationalization

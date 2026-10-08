@@ -33,7 +33,7 @@ Add `martensite-macros` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-macros = "0.21.0"
+martensite-macros = "0.21.1"
 ```
 
 Declaring a custom widget:

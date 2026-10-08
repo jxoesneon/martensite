@@ -38,7 +38,7 @@ Add `martensite-motion` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-motion = "0.21.0"
+martensite-motion = "0.21.1"
 ```
 
 Simulating spring motion:

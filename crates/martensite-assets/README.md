@@ -40,7 +40,7 @@ Add `martensite-assets` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-assets = "0.21.0"
+martensite-assets = "0.21.1"
 ```
 
 Embedding assets and validating shaders:
