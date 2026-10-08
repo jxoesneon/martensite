@@ -43,6 +43,15 @@
 //! pixel assertion still passes (a clamped backing store upscaled by
 //! the browser paints identically at the compositor).
 //!
+//! Scoping note: headless SwiftShader reports a
+//! `max_texture_dimension_2d` well above 2200, and the WebGL2 device
+//! descriptor now requests `min(adapter limit, 8192)`, so on this
+//! runner `configure` succeeds directly — the gate proves the
+//! raised-limit path end-to-end. The `clamp_extent` shrink path
+//! (needed on genuinely 2048-capped adapters like the Firefox
+//! deployment that reported this bug) is covered by unit tests; no
+//! headless adapter limited enough to exercise it is available.
+//!
 //! # Manual equivalent
 //!
 //! Build + serve per README "Web (wasm32)", open the page in a

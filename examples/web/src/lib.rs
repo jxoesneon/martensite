@@ -149,8 +149,13 @@ impl ApplicationHandler for App {
                 // ResizeObserver tick until the swapchain exceeds the
                 // maximum texture size. Reconfigure with `size` as-is.
                 if let Some(state) = &mut *self.gpu.borrow_mut() {
-                    state.config.width = size.width.max(1);
-                    state.config.height = size.height.max(1);
+                    let (w, h) = martensite_web::surface::clamp_extent(
+                        size.width.max(1),
+                        size.height.max(1),
+                        state.context.device.limits().max_texture_dimension_2d,
+                    );
+                    state.config.width = w;
+                    state.config.height = h;
                     state
                         .surface
                         .configure(&state.context.device, &state.config);
@@ -333,12 +338,22 @@ impl App {
                     let scale = web_sys::window()
                         .map(|w| w.device_pixel_ratio())
                         .unwrap_or(1.0);
+                    // The raw CSS×DPR extent can exceed the device's
+                    // `max_texture_dimension_2d` (WebGL2 caps at 2048 on
+                    // downlevel adapters; HiDPI DPR easily pushes past it),
+                    // which fails `configure` silently and panics the next
+                    // `get_current_texture` — clamp like `SurfaceWrapper`.
+                    let (w, h) = martensite_web::surface::clamp_extent(
+                        (f64::from(LOGICAL_WIDTH) * scale).round().max(1.0) as u32,
+                        (f64::from(LOGICAL_HEIGHT) * scale).round().max(1.0) as u32,
+                        context.device.limits().max_texture_dimension_2d,
+                    );
                     let config = wgpu::SurfaceConfiguration {
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                         format,
                         color_space: wgpu::SurfaceColorSpace::Auto,
-                        width: (f64::from(LOGICAL_WIDTH) * scale).round().max(1.0) as u32,
-                        height: (f64::from(LOGICAL_HEIGHT) * scale).round().max(1.0) as u32,
+                        width: w,
+                        height: h,
                         present_mode: wgpu::PresentMode::AutoVsync,
                         desired_maximum_frame_latency: 2,
                         alpha_mode: wgpu::CompositeAlphaMode::Auto,

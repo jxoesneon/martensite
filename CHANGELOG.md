@@ -29,7 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upscales the smaller bitmap to the layout box (the only cost is
   softness on capped adapters). The widget catalog's browser gate now
   exercises an oversize canvas (2200×1300) and asserts the absence of
-  the validation/panic markers.
+  the validation/panic markers. The `examples/web` showcase, which
+  configures a raw `wgpu::Surface` outside `SurfaceWrapper`, applies
+  the same `clamp_extent` at its initial-configure and resize sites
+  (reachable via the new `martensite_web::surface` re-export).
+
+  Known limitation: when a canvas's CSS×DPR extent is genuinely clamped
+  (adapter limit below the canvas size — rare, since the descriptor now
+  requests up to `min(adapter, 8192)`), winit still reports pointer
+  positions and `surface_size` in the unclamped coordinate space, so
+  hit targets are offset by the clamp ratio on such adapters. Pointer
+  and scale-factor scaling for the clamped regime is tracked as a
+  follow-up.
 
 ## [0.21.0] - 2026-10-07
 

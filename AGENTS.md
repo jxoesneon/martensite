@@ -427,6 +427,19 @@ These are explicitly documented in code, not hidden:
   dashboard installs `device.on_uncaptured_error` → stderr; tests can
   `tracing_subscriber::fmt::try_init()` (its `tracing-log` feature
   captures `log` records).
+- Any extent reaching a wgpu object — `Surface::configure`, texture
+  creation, media import — must be checked against
+  `device.limits().max_texture_dimension_2d` first. `configure` rejects
+  oversize extents through the uncaptured-error sink only (no return
+  value), leaving the surface unconfigured so the next
+  `get_current_texture` **panics** (and on the web cascades into
+  winit-web's `RefCell` borrow). `SurfaceWrapper::configure`/`resize`
+  clamp internally via `surface::clamp_extent` and `acquire_frame`
+  maps never-configured to transient `Outdated`; raw
+  `wgpu::Surface` users must apply `clamp_extent` themselves (see
+  `examples/web`). Known residual surfaces: `RenderOrchestrator::
+  configure_surface`/`set_frame_size` store unclamped dims, and
+  media-platform texture imports don't clamp frame extents.
 - Vello 0.10's `render_to_texture` is **non-robust**: fixed bump
   buffers, and overflow sets `bump.failed` then silently early-outs —
   empty frame, `Ok(())`, no error. `bump.blend` (per-tile blend-stack

@@ -33,6 +33,7 @@ pub use martensite_dnd::web as dnd;
 pub use martensite_text::web as text;
 pub use martensite_text::FontManager;
 pub use martensite_wgpu::device::GpuContext;
+pub use martensite_wgpu::surface;
 pub use martensite_wgpu::web as gpu;
 pub use martensite_wgpu::wgpu;
 pub use martensite_window::web as window;
