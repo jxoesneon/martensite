@@ -35,7 +35,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "pages-wasm32"
+      # opt-level "z" scoped to this step only (the workspace release
+      # profile stays at 3): the catalog wasm bundle is served to every
+      # Pages visitor, so size matters more than runtime throughput here.
       - name: Build widget catalog (wasm32)
+        env:
+          CARGO_PROFILE_RELEASE_OPT_LEVEL: "z"
         run: cargo build -p widget_catalog --target wasm32-unknown-unknown --release
       # Pinned to the wasm-bindgen crate version in the workspace lockfile
       # (examples/web convention): the CLI must match the library or glue

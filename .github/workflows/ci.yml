@@ -696,6 +696,15 @@ jobs:
           echo "AR_aarch64_linux_android=$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
       - name: cargo check --target ${{ matrix.target }}
         run: cargo check --target ${{ matrix.target }} --all-targets ${{ matrix.crates }}
+      # wasm-only dev-channel surfaces are feature-gated and invisible to
+      # the default-feature check above: martensite-devtools' web channel
+      # (`web-dev-channel`) and the catalog's dev overlay (`web-dev`,
+      # which pulls in the devtools channel).
+      - name: cargo check wasm32 dev-channel feature legs
+        if: matrix.name == 'wasm32'
+        run: |
+          cargo check --target ${{ matrix.target }} --all-targets -p martensite-devtools --features web-dev-channel
+          cargo check --target ${{ matrix.target }} --all-targets -p widget_catalog --features web-dev
 
   # Mechanical API-freeze enforcement (milestone v0.18.0 §4.1).
   #
