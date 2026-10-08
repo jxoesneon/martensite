@@ -89,9 +89,21 @@ fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
     return select(hi, lo, c <= vec3<f32>(0.0031308));
 }
 
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
 @fragment
 fn fs_premul(in: VsOut) -> @location(0) vec4<f32> {
     return textureSample(src_tex, src_samp, in.uv);
+}
+
+@fragment
+fn fs_premul_decode(in: VsOut) -> @location(0) vec4<f32> {
+    let c = textureSample(src_tex, src_samp, in.uv);
+    return vec4<f32>(srgb_to_linear(c.rgb), c.a);
 }
 
 @fragment
@@ -273,6 +285,7 @@ pub struct WgpuHost {
     rect_cursor: Cell<u32>,
     sampler: wgpu::Sampler,
     pipeline_premul_passthrough: wgpu::RenderPipeline,
+    pipeline_premul_decode: wgpu::RenderPipeline,
     pipeline_premul_encode: wgpu::RenderPipeline,
     pipeline_straight_passthrough: wgpu::RenderPipeline,
     pipeline_straight_encode: wgpu::RenderPipeline,
@@ -427,6 +440,7 @@ impl WgpuHost {
             rect_cursor: Cell::new(0),
             sampler,
             pipeline_premul_passthrough: make_pipeline("fs_premul"),
+            pipeline_premul_decode: make_pipeline("fs_premul_decode"),
             pipeline_premul_encode: make_pipeline("fs_premul_encode"),
             pipeline_straight_passthrough: make_pipeline("fs_straight"),
             pipeline_straight_encode: make_pipeline("fs_straight_encode"),
@@ -730,6 +744,46 @@ impl WgpuHost {
             &self.pipeline_straight_passthrough,
             rect,
             clip,
+            wgpu::LoadOp::Load,
+        )
+    }
+
+    /// Records the CPU-raster present blit: draws `view` — a
+    /// premultiplied-alpha texture holding the TinySkia frame — over
+    /// the cleared `target`. Used when the surface was configured
+    /// without `COPY_DST` (every browser surface: wgpu's WebGPU and
+    /// WebGL2 backends advertise `RENDER_ATTACHMENT` alone), where the
+    /// direct `Queue::write_texture` upload is invalid.
+    ///
+    /// `view` is sampled in the texture's own (non-sRGB) format:
+    /// browser downlevel devices lack `DownlevelFlags::VIEW_FORMATS`,
+    /// so the sRGB round-trip the segment pool gets from an sRGB-typed
+    /// view is reproduced in-shader — `fs_premul_decode` on sRGB
+    /// targets, raw pass-through on unorm ones.
+    pub(crate) fn record_cpu_present(
+        &self,
+        device: &wgpu::Device,
+        target: CompositeTarget<'_>,
+        view: &wgpu::TextureView,
+        rect: [f32; 4],
+        clip: [f32; 4],
+    ) -> Result<(), ExternalError> {
+        let bind_group = self.segment_bind_group(device, view);
+        let pipeline = if self.target_is_srgb {
+            &self.pipeline_premul_decode
+        } else {
+            &self.pipeline_premul_passthrough
+        };
+        // The draw covers the whole target; clearing first drops any
+        // contribution from the (undefined) previous contents at
+        // alpha < 1 texels.
+        self.record_composite(
+            target,
+            &bind_group,
+            pipeline,
+            rect,
+            clip,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
         )
     }
 
@@ -737,7 +791,8 @@ impl WgpuHost {
     ///
     /// Shared body of [`composite`](WgpuHost::composite) and
     /// [`composite_view`](WgpuHost::composite_view): uploads the rect,
-    /// opens a `LoadOp::Load` pass, scissors to `clip`, and draws.
+    /// opens a pass with the given `load` op, scissors to `clip`, and
+    /// draws.
     fn record_composite(
         &self,
         target: CompositeTarget<'_>,
@@ -745,6 +800,7 @@ impl WgpuHost {
         pipeline: &wgpu::RenderPipeline,
         rect: [f32; 4],
         clip: [f32; 4],
+        load: wgpu::LoadOp<wgpu::Color>,
     ) -> Result<(), ExternalError> {
         let offset = self.write_rect(target.queue, rect, target.size)?;
 
@@ -757,7 +813,7 @@ impl WgpuHost {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -826,6 +882,7 @@ impl WgpuHost {
             self.external_pipeline(entry.alpha),
             rect,
             clip,
+            wgpu::LoadOp::Load,
         )
     }
 
@@ -924,6 +981,7 @@ impl WgpuHost {
             self.external_pipeline(alpha),
             rect,
             clip,
+            wgpu::LoadOp::Load,
         ) {
             // Free the slot — a permanent `Compositing` state would
             // exhaust the two-slot ring and stall the producer.
@@ -989,6 +1047,7 @@ impl WgpuHost {
             &self.pipeline_straight_passthrough,
             rect,
             clip,
+            wgpu::LoadOp::Load,
         )
     }
 }

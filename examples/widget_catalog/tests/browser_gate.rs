@@ -286,7 +286,21 @@ const candidates = [
 ].filter((p) => p && fs.existsSync(p));
 const launchArgs = {
   headless: true,
-  args: ['--no-sandbox', '--enable-unsafe-webgpu'],
+  // Headless Chromium does not raster canvases with default flags on
+  // this runner; SwiftShader restores software rasterization so the
+  // canvas-pixel assertion is meaningful. `--enable-unsafe-webgpu` is
+  // deliberately absent: with it the probe selects a WebGPU adapter,
+  // but the headless GPU process then destroys the device seconds
+  // later ("A valid external Instance reference no longer exists"),
+  // leaving a permanently blank canvas — observed at the raw JS level
+  // (`device.lost` resolves "destroyed" even with retained handles).
+  // Without the flag the adapter probe falls through to the WebGL2/
+  // TinySkia path, which is the only backend that can present here.
+  args: [
+    '--no-sandbox',
+    '--use-gl=swiftshader',
+    '--enable-unsafe-swiftshader',
+  ],
   ...(candidates.length ? { executablePath: candidates[0] } : {}),
 };
 const browser = await chromium.launch(launchArgs);
@@ -302,9 +316,21 @@ try {
     pageErrors.push(String(e));
   });
   await page.goto(url, { waitUntil: 'load' });
-  // Let wasm init, the GPU probe resolve, the font fetch land, and a
-  // few rAF frames pass.
-  await page.waitForTimeout(6000);
+  // The mirror container is appended by `init_web_a11y` the moment the
+  // async init legs (GPU probe + font fetch) have both landed, so its
+  // presence is the DOM-visible readiness signal — a fixed sleep is
+  // flaky under load because the probe's adapter request can take
+  // seconds under SwiftShader.
+  // `attached`, not the default `visible`: the mirror container is a
+  // 0x0 positioned box (the mirror projects bounds onto its children,
+  // which are themselves `opacity:0`) so it never satisfies
+  // Playwright's visibility check.
+  mirror = await page.waitForSelector('[data-martensite-a11y-mirror]', {
+    state: 'attached',
+    timeout: 30000,
+  }).catch(() => null);
+  // A few rAF frames so the first present has a chance to land.
+  await page.waitForTimeout(2000);
 
   // Programmatic a11y enablement: the production path is the hidden
   // "Enable accessibility" button (it insists on a trusted click);
@@ -314,10 +340,12 @@ try {
     mod.martensite_catalog_enable_a11y();
   });
   // The enable request is consumed on the next frame; the pending
-  // tree materializes then.
-  await page.waitForTimeout(1500);
-
-  mirror = await page.$('[data-martensite-a11y-mirror]');
+  // tree materializes then — the projected role nodes appear inside
+  // the already-appended container.
+  await page.waitForSelector('[data-martensite-a11y-mirror] [role]', {
+    state: 'attached',
+    timeout: 10000,
+  }).catch(() => null);
   if (mirror) {
     roleCount = await mirror.$$eval('[role]', (els) => els.length);
   }

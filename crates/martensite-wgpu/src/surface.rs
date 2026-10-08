@@ -351,13 +351,21 @@ impl<'window> SurfaceWrapper<'window> {
             .unwrap_or(wgpu::TextureFormat::Bgra8Unorm);
         let present_mode = self.negotiate_present_mode(adapter);
 
+        // `RENDER_ATTACHMENT` allows the surface to be used as a render
+        // pass target (e.g. by a blit pipeline). `COPY_DST` additionally
+        // allows the CPU software rasterizer to upload its pixel buffer
+        // directly into the surface texture via `Queue::write_texture`
+        // (the TinySkia fallback path in
+        // `RenderOrchestrator::render_to_surface`). It is requested only
+        // where the backend advertises it — browser surfaces (both the
+        // WebGPU and WebGL2 wgpu backends) report `RENDER_ATTACHMENT`
+        // alone, and requesting more fails validation. Without
+        // `COPY_DST` the CPU path presents through a render-pass blit
+        // instead.
+        let usage =
+            caps.usages & (wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST);
         let config = wgpu::SurfaceConfiguration {
-            // `RENDER_ATTACHMENT` allows the surface to be used as a render
-            // pass target (e.g. by a blit pipeline). `COPY_DST` allows the CPU
-            // software rasterizer to upload its pixel buffer directly into the
-            // surface texture via `Queue::write_texture` (the TinySkia fallback
-            // path in `RenderOrchestrator::render_to_surface`).
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            usage,
             format,
             color_space: wgpu::SurfaceColorSpace::Auto,
             width,

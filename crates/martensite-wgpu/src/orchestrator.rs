@@ -160,8 +160,14 @@ pub struct RenderOrchestrator {
     /// The external-surface composite host (`v0.14.0`). When `Some`,
     /// `PaintCommand::External` markers in a paint list are composited
     /// via [`WgpuHost`] between Vello scene segments, preserving exact
-    /// paint ordering.
+    /// paint ordering. Also drives the CPU present blit when the
+    /// surface lacks `COPY_DST`.
     external_host: Option<crate::external::WgpuHost>,
+    /// CPU present staging texture, lazily created when the configured
+    /// surface lacks `COPY_DST` (every browser surface), where the
+    /// TinySkia pixel buffer cannot be uploaded by
+    /// `Queue::write_texture` directly into the surface texture.
+    cpu_blit: Option<CpuBlit>,
     /// Ordered paint segments captured by the last GPU-mode `render`
     /// call. Empty when the last list contained no `External` markers —
     /// the whole-list Vello dispatch is used unchanged.
@@ -229,6 +235,19 @@ const AUDIT_INTERVAL: u32 = 30;
 /// contract is testable without a GPU context.
 fn audit_due(frames: u32) -> bool {
     frames.is_multiple_of(AUDIT_INTERVAL)
+}
+
+/// Offscreen staging texture for the CPU present blit: a `Rgba8Unorm`
+/// texture that receives the TinySkia pixel upload via
+/// `Queue::write_texture` and is then sampled by the composite
+/// pipeline into the surface texture. Unlike the Vello segment pool
+/// it carries no `view_formats`: browser downlevel devices lack
+/// `DownlevelFlags::VIEW_FORMATS`, so the composite host does the
+/// sRGB round-trip in-shader (`fs_premul_decode`).
+struct CpuBlit {
+    texture: wgpu::Texture,
+    /// Default-format sample view of `texture`.
+    view: wgpu::TextureView,
 }
 
 /// One pooled Vello segment texture: storage target + cached
@@ -326,6 +345,7 @@ impl RenderOrchestrator {
             config,
             backdrop_mode: crate::surface::BackdropMode::Opaque,
             external_host: None,
+            cpu_blit: None,
             pending: Vec::new(),
             gpu_clear: martensite_render::ClearMode::Opaque([0.0, 0.0, 0.0, 1.0]),
             #[cfg(feature = "vello")]
@@ -839,7 +859,9 @@ impl RenderOrchestrator {
         // this size.
         self.frame_size = (width, height);
         if !self.tinyskia.resize(width, height) {
-            tracing::warn!("tinyskia resize to {width}x{height} failed — CPU fallback may present stale frames");
+            tracing::warn!(
+                "tinyskia resize to {width}x{height} failed — CPU fallback may present stale frames"
+            );
         }
         Ok(())
     }
@@ -854,7 +876,9 @@ impl RenderOrchestrator {
     pub fn set_frame_size(&mut self, width: u32, height: u32) {
         self.frame_size = (width, height);
         if !self.tinyskia.resize(width, height) {
-            tracing::warn!("tinyskia resize to {width}x{height} failed — CPU fallback may present stale frames");
+            tracing::warn!(
+                "tinyskia resize to {width}x{height} failed — CPU fallback may present stale frames"
+            );
         }
     }
 
@@ -928,10 +952,13 @@ impl RenderOrchestrator {
             _ => return Err(SurfaceError::Lost),
         };
 
-        let (width, height, format) = surface
-            .configuration()
-            .map(|c| (c.width, c.height, c.format))
-            .ok_or(SurfaceError::Lost)?;
+        let surface_config = surface.configuration().ok_or(SurfaceError::Lost)?;
+        let (width, height, format, surface_usage) = (
+            surface_config.width,
+            surface_config.height,
+            surface_config.format,
+            surface_config.usage,
+        );
 
         match self.mode {
             RenderMode::Gpu => {
@@ -965,20 +992,27 @@ impl RenderOrchestrator {
                 }
             }
             RenderMode::Cpu => {
-                let pixels = self.tinyskia.pixels();
                 let expected = (width as usize)
                     .checked_mul(height as usize)
                     .and_then(|n| n.checked_mul(4));
-                if expected != Some(pixels.len()) {
+                if expected != Some(self.tinyskia.pixels().len()) {
                     tracing::warn!(
-                        pixel_len = pixels.len(),
+                        pixel_len = self.tinyskia.pixels().len(),
                         expected = expected,
                         width,
                         height,
                         "TinySkia pixel buffer size does not match the surface dimensions; \
                          skipping CPU upload"
                     );
+                } else if !surface_usage.contains(wgpu::TextureUsages::COPY_DST) {
+                    // Browser surfaces advertise `RENDER_ATTACHMENT`
+                    // alone — `write_texture` into the surface texture
+                    // is invalid, so the frame goes through an
+                    // offscreen texture and a render-pass blit.
+                    let pixels = self.tinyskia.pixels().to_vec();
+                    self.present_cpu_blit(device, queue, &st, surface_config, &pixels);
                 } else {
+                    let pixels = self.tinyskia.pixels();
                     let bytes_per_row = width.checked_mul(4).ok_or(SurfaceError::Validation)?;
                     // `Queue::write_texture` requires the data to match the
                     // surface's texel format. TinySkia produces RGBA8, so
@@ -1034,6 +1068,98 @@ impl RenderOrchestrator {
         }
         queue.present(st);
         Ok(())
+    }
+
+    /// Presents the TinySkia CPU frame through a render-pass blit.
+    ///
+    /// Used when the surface was configured without `COPY_DST` — wgpu's
+    /// browser backends (WebGPU and WebGL2 alike) advertise
+    /// `RENDER_ATTACHMENT` alone, so `Queue::write_texture` cannot
+    /// target the surface texture. The premultiplied RGBA8 pixel buffer
+    /// is uploaded to a staging texture and drawn full-frame by the
+    /// composite pipeline, which needs only `TEXTURE_BINDING` +
+    /// `RENDER_ATTACHMENT` — both universally available.
+    fn present_cpu_blit(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::SurfaceTexture,
+        config: &wgpu::SurfaceConfiguration,
+        pixels: &[u8],
+    ) {
+        let (width, height, format) = (config.width, config.height, config.format);
+        self.ensure_host(device, format);
+
+        let stale = match &self.cpu_blit {
+            Some(blit) => blit.texture.width() != width || blit.texture.height() != height,
+            None => true,
+        };
+        if stale {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("tinyskia-present-texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.cpu_blit = Some(CpuBlit { texture, view });
+        }
+        let blit = self.cpu_blit.as_ref().expect("blit just created");
+        // TinySkia produces RGBA8 and the staging texture is
+        // `Rgba8Unorm` — no swizzle is needed (unlike the direct
+        // surface upload, which must match the surface's own format).
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &blit.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width.saturating_mul(4)),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let target_view = target
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let sample_view = &self.cpu_blit.as_ref().expect("blit exists").view;
+        let host = self.external_host.as_ref().expect("host just ensured");
+        host.begin_frame();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("cpu-present-encoder"),
+        });
+        let rect = [0.0, 0.0, width as f32, height as f32];
+        if let Err(err) = host.record_cpu_present(
+            device,
+            crate::external::CompositeTarget {
+                encoder: &mut encoder,
+                queue,
+                view: &target_view,
+                size: (width, height),
+            },
+            sample_view,
+            rect,
+            rect,
+        ) {
+            tracing::warn!(error = %err, "CPU present blit skipped");
+        }
+        queue.submit([encoder.finish()]);
     }
 
     /// Renders the most recently built Vello scene to an offscreen texture
@@ -1522,7 +1648,6 @@ impl RenderOrchestrator {
 
     /// Ensures the installed [`WgpuHost`] exists and was built for
     /// `target_format`, lazily creating or recreating it.
-    #[cfg(feature = "vello")]
     fn ensure_host(&mut self, device: &wgpu::Device, target_format: wgpu::TextureFormat) {
         match &self.external_host {
             Some(host) if host.target_format() == target_format => {}

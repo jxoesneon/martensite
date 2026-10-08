@@ -228,6 +228,17 @@ pub(crate) struct App {
     /// handle for it can never be dropped under the live surface.
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     _web_instance: Option<martensite_web::wgpu::Instance>,
+    /// Async device-loss recovery slot on the web: `Some` while a
+    /// `request_device` promise is in flight, carrying its result once
+    /// resolved. `pump_web_device_recovery` consumes it on the frame
+    /// thread — `pollster::block_on` cannot drive a JS promise, so the
+    /// re-request must ride the browser event loop.
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    web_device_retry: Rc<
+        RefCell<
+            Option<Result<(martensite_web::wgpu::Device, martensite_web::wgpu::Queue), String>>,
+        >,
+    >,
     /// F12 diagnostic HUD — web-dev builds only.
     #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
     hud: martensite::devtools::hud::DiagnosticHud,
@@ -285,6 +296,8 @@ impl App {
             _font_guard: None,
             #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
             _web_instance: None,
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            web_device_retry: Rc::new(RefCell::new(None)),
             #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
             hud: martensite::devtools::hud::DiagnosticHud::new(),
             #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
@@ -560,6 +573,78 @@ impl App {
         window.request_redraw();
     }
 
+    /// Drives web device-loss recovery forward once per frame.
+    ///
+    /// A browser-side device loss (the Dawn "external Instance
+    /// reference no longer exists" wire-client shutdown) cannot be
+    /// recovered synchronously on wasm — `requestDevice` returns a JS
+    /// promise that only resolves on the browser event loop — so the
+    /// re-request rides `spawn_local` and its result lands in
+    /// `web_device_retry`. The [`RecoveryMachine`] states mirror the
+    /// native harness: `DeviceLost → SuspendedWithRetry → Recreated →
+    /// Restored → Active`, falling back to `FallbackCpu` once the retry
+    /// budget is exhausted.
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    fn pump_web_device_recovery(&mut self) {
+        use martensite_wgpu::DeviceStatus;
+
+        if let Some(result) = self.web_device_retry.borrow_mut().take() {
+            match result {
+                Ok((device, queue)) => {
+                    if let (Some(gpu), Some(surface), Some(window)) =
+                        (&mut self.gpu, &mut self.surface, &self.window)
+                    {
+                        gpu.device = Arc::new(device);
+                        gpu.queue = Arc::new(queue);
+                        let size = window.surface_size();
+                        match surface.resize(&gpu.device, size.width.max(1), size.height.max(1)) {
+                            Ok(()) => {
+                                self.recovery.retry_succeeded();
+                                self.recovery.restore_completed();
+                                crate::web::log("web GPU device recovered");
+                            }
+                            Err(err) => {
+                                crate::web::log(&format!(
+                                    "surface reconfigure after device recovery failed: {err}"
+                                ));
+                                self.recovery.retry_failed();
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    crate::web::log(&format!("web GPU device re-request failed: {err}"));
+                    self.recovery.retry_failed();
+                }
+            }
+        }
+        if self.web_device_retry.borrow().is_some() {
+            // A re-request is still in flight.
+            return;
+        }
+        match self.recovery.status() {
+            DeviceStatus::DeviceLost { .. } => self.recovery.begin_retry(),
+            DeviceStatus::SuspendedWithRetry { .. } => {}
+            _ => return,
+        }
+        let Some(gpu) = &self.gpu else { return };
+        let adapter = Arc::clone(&gpu.adapter);
+        // The surviving adapter re-issues a logical device against the
+        // same limit contract the bootstrap probe negotiated.
+        let desc = martensite_wgpu::web::device_descriptor_for(
+            martensite_wgpu::web::classify_adapter(&gpu.adapter_info),
+        );
+        let slot = Rc::clone(&self.web_device_retry);
+        martensite_web::wasm_bindgen_futures::spawn_local(async move {
+            *slot.borrow_mut() = Some(
+                adapter
+                    .request_device(&desc)
+                    .await
+                    .map_err(|e| e.to_string()),
+            );
+        });
+    }
+
     /// Builds the `WebA11yBridge` mirror, wires its action requests back
     /// into the arena through the same `decode_action` path the native
     /// adapter uses, and stages the initial tree. Off by default — the
@@ -622,6 +707,7 @@ impl App {
                 }
                 return;
             }
+            self.pump_web_device_recovery();
         }
         let Some(arena) = self.arena.clone() else {
             return;
@@ -662,7 +748,7 @@ impl App {
             }
         }
 
-        match (
+        let presented = match (
             &self.window,
             &self.gpu,
             &mut self.surface,
@@ -670,18 +756,36 @@ impl App {
         ) {
             (Some(window), Some(gpu), Some(surface), Some(orchestrator)) => {
                 orchestrator.render(&list, &self.recovery);
-                if let Err(err) = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {
-                    self.recovery.handle_surface_error(err);
-                    let size = window.surface_size();
-                    if let Err(err) =
-                        surface.resize(&gpu.device, size.width.max(1), size.height.max(1))
-                    {
-                        eprintln!("widget_catalog: surface resize failed: {err}");
+                let result = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface);
+                Some((Arc::clone(window), result))
+            }
+            _ => None,
+        };
+        match presented {
+            Some((window, Ok(()))) => {
+                // Marks `Restored`/`FallbackCpu` recoveries complete;
+                // a no-op while `Active`.
+                self.recovery.repaint_completed();
+                window.request_redraw();
+            }
+            Some((window, Err(err))) => {
+                if self.recovery.handle_surface_error(err) {
+                    // Transient acquire failure — reconfigure in place.
+                    // Non-transient errors entered the recovery path;
+                    // on the web `pump_web_device_recovery` drives the
+                    // async re-request each frame.
+                    if let (Some(surface), Some(gpu)) = (&mut self.surface, &self.gpu) {
+                        let size = window.surface_size();
+                        if let Err(err) =
+                            surface.resize(&gpu.device, size.width.max(1), size.height.max(1))
+                        {
+                            eprintln!("widget_catalog: surface resize failed: {err}");
+                        }
                     }
                 }
                 window.request_redraw();
             }
-            _ => {
+            None => {
                 // No present target (headless, or the web GPU probe
                 // found no adapter) — still keep the loop alive so the
                 // session and mirror keep pumping.
