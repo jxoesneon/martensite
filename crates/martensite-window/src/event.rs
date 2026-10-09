@@ -546,6 +546,22 @@ pub enum EventDispatchOutcome {
     Ignored,
 }
 
+/// Per-window in-progress external drag state.
+///
+/// winit delivers a drop in two stages: `DragEntered`/`DragPosition`/
+/// `DragDropped` carry positions but no data, while the payload resolves
+/// asynchronously through `fetch_data_transfer` → `DataTransferReceived`.
+/// The router remembers which widget the drag was over so
+/// [`EventRouter::dispatch_drop_payload`] can complete the delivery.
+#[derive(Debug, Clone, Default)]
+struct DropState {
+    /// The widget under the last reported drag position.
+    target: Option<WidgetId>,
+    /// The last reported drag position (logical coordinates). winit's
+    /// `DragDropped` reports none, so `Dropped` reuses this.
+    position: Option<Vec2>,
+}
+
 /// The main event routing pipeline.
 ///
 /// An [`EventRouter`] owns a [`PointerCapture`] and a [`MouseTracker`] and
@@ -621,6 +637,12 @@ pub struct EventRouter {
     pending_focus: Option<WidgetId>,
     /// Multi-click streak state feeding `PointerPressed::count`.
     clicks: ClickTracker,
+    /// Per-window drop state: the last drag position and the widget
+    /// currently targeted by the in-progress external drag. winit's
+    /// `DragDropped` carries no position and the payload resolves
+    /// asynchronously via `DataTransferReceived`, so the target must be
+    /// remembered between events.
+    drop: std::collections::HashMap<WindowId, DropState>,
     /// Preallocated ring buffer for event dispatch observability.
     #[cfg(feature = "devtools")]
     ledger: martensite_devtools::event_ledger::EventLedger,
@@ -1534,6 +1556,179 @@ impl EventRouter {
             }
         }
     }
+
+    /// Routes an external drag's hover phase to the widget under the
+    /// drag position and tracks drop state for the payload completion.
+    ///
+    /// winit's `DragDropped` carries no position and the payload arrives
+    /// later through `DataTransferReceived`, so this method:
+    ///
+    /// - `Entered`/`Moved` — hit-tests at `position`, dispatches
+    ///   [`WidgetEvent::DropHoverLeave`] to the previous target when it
+    ///   changes, then [`WidgetEvent::DropHover`] to the new one, and
+    ///   records `(target, position)` for the drop completion.
+    /// - `Dropped` — keeps the recorded target and returns its
+    ///   identity; the caller should fetch the transfer data and call
+    ///   [`dispatch_drop_payload`](Self::dispatch_drop_payload) when it
+    ///   arrives.
+    /// - `Left` — dispatches `DropHoverLeave` to the tracked target and
+    ///   clears the drop state.
+    ///
+    /// Overlay popups are offered hover events first, matching scroll
+    /// dispatch. Returns the widget's [`EventResponse`], or `None` when
+    /// nothing was hit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{DummyWidget, HotNode, NodeFlags, WidgetArena};
+    /// use martensite_window::event::{DropAction, DropEvent, EventRouter};
+    /// use martensite_window::WindowId;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags = NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+    /// hot.bounds = martensite_core::Rect::new(0.0, 0.0, 100.0, 100.0);
+    /// let root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    ///
+    /// let mut router = EventRouter::new();
+    /// let win = WindowId::from_raw(1);
+    /// let ev = DropEvent::Moved {
+    ///     position: Vec2::new(10.0, 10.0),
+    ///     action: DropAction::Copy,
+    /// };
+    /// assert!(router
+    ///     .dispatch_drop_event(&mut arena, root, win, &ev)
+    ///     .is_some());
+    /// ```
+    pub fn dispatch_drop_event(
+        &mut self,
+        arena: &mut WidgetArena,
+        root: WidgetId,
+        window_id: WindowId,
+        event: &DropEvent,
+    ) -> Option<EventResponse> {
+        // `Moved` always carries a position; `Entered`'s is `Option` —
+        // a positionless enter leaves hover tracking to the first Moved.
+        let position = match event {
+            DropEvent::Entered { position, .. } => *position,
+            DropEvent::Moved { position, .. } => Some(*position),
+            _ => None,
+        };
+        match event {
+            DropEvent::Entered { .. } | DropEvent::Moved { .. } => {
+                let Some(pos) = position else {
+                    return Some(EventResponse::Ignored);
+                };
+                let state = self.drop.entry(window_id).or_default();
+                state.position = Some(pos);
+                let previous = state.target;
+                let tester = HitTester::new(arena);
+                let target = tester.hit_test(root, pos).map(|r| r.widget_id);
+                state.target = target;
+                if previous != target {
+                    if let Some(old) = previous {
+                        arena.dispatch_event_ex(old, &WidgetEvent::DropHoverLeave);
+                    }
+                }
+                let response = match target {
+                    Some(id) => arena
+                        .dispatch_event_ex(id, &WidgetEvent::DropHover { position: pos })
+                        .map(|(_, r)| r)
+                        .or(Some(EventResponse::Ignored)),
+                    None => None,
+                };
+                self.drain_focus(arena);
+                response
+            }
+            DropEvent::Dropped { .. } => {
+                // Record the drop even if no hover events preceded it —
+                // a positionless drop still completes through
+                // `dispatch_drop_payload`, which falls back to `root`.
+                self.drop.entry(window_id).or_default();
+                Some(EventResponse::Ignored)
+            }
+            DropEvent::Left => {
+                let state = self.drop.remove(&window_id)?;
+                if let Some(target) = state.target {
+                    let response = arena.dispatch_event_ex(target, &WidgetEvent::DropHoverLeave);
+                    self.drain_focus(arena);
+                    return response.map(|(_, r)| r).or(Some(EventResponse::Ignored));
+                }
+                None
+            }
+        }
+    }
+
+    /// Delivers a resolved drop payload to the widget that was under the
+    /// drag when `Dropped` arrived.
+    ///
+    /// Call this from the winit `WindowEvent::DataTransferReceived`
+    /// handler after converting the transfer contents into a
+    /// [`DropPayload`]. The tracked target and last drag position for
+    /// `window_id` are consumed; when the drag never reported a hover
+    /// position (or hit no widget) the payload falls back to `root`, so
+    /// drop-anywhere-to-open apps still receive it. Returns `None` only
+    /// when no drop was in progress for the window.
+    ///
+    /// [`DropPayload`]: martensite_core::DropPayload
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use glam::Vec2;
+    /// use martensite_core::{DropPayload, DummyWidget, HotNode, NodeFlags, WidgetArena};
+    /// use martensite_window::event::{DropAction, DropEvent, EventRouter};
+    /// use martensite_window::WindowId;
+    ///
+    /// let mut arena = WidgetArena::new();
+    /// let mut hot = HotNode::default();
+    /// hot.flags = NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED;
+    /// hot.bounds = martensite_core::Rect::new(0.0, 0.0, 100.0, 100.0);
+    /// let root = arena.insert_with_widget(hot, Box::new(DummyWidget));
+    ///
+    /// let mut router = EventRouter::new();
+    /// let win = WindowId::from_raw(1);
+    /// router.dispatch_drop_event(
+    ///     &mut arena,
+    ///     root,
+    ///     win,
+    ///     &DropEvent::Moved {
+    ///         position: Vec2::new(5.0, 5.0),
+    ///         action: DropAction::Copy,
+    ///     },
+    /// );
+    /// router.dispatch_drop_event(&mut arena, root, win, &DropEvent::Dropped {
+    ///     action: DropAction::Copy,
+    /// });
+    /// let r = router.dispatch_drop_payload(
+    ///     &mut arena,
+    ///     root,
+    ///     win,
+    ///     DropPayload::Files(vec!["/tmp/a.png".into()]),
+    /// );
+    /// assert!(r.is_some());
+    /// ```
+    pub fn dispatch_drop_payload(
+        &mut self,
+        arena: &mut WidgetArena,
+        root: WidgetId,
+        window_id: WindowId,
+        payload: martensite_core::DropPayload,
+    ) -> Option<EventResponse> {
+        let state = self.drop.remove(&window_id)?;
+        let target = state.target.unwrap_or(root);
+        let response = arena.dispatch_event_ex(
+            target,
+            &WidgetEvent::Dropped {
+                position: state.position,
+                payload,
+            },
+        );
+        self.drain_focus(arena);
+        response.map(|(_, r)| r).or(Some(EventResponse::Ignored))
+    }
 }
 
 #[cfg(feature = "devtools")]
@@ -1720,6 +1915,42 @@ pub fn ime_event_for_winit(ime: &winit::event::Ime) -> Option<ImeEvent> {
         }),
         // Enabled/Disabled are host lifecycle notifications, not
         // widget-delivery events; future winit variants are ignored too.
+        _ => None,
+    }
+}
+
+/// Converts a winit logical key into the string key name widget events
+/// carry (`WidgetEvent::KeyPressed { key, .. }`).
+///
+/// Named keys become their `NamedKey` debug name (`"Enter"`,
+/// `"ArrowLeft"`, …) and character keys their text — `Key::Character`
+/// `" "` therefore arrives as `" "`, the convention the widget layer's
+/// key-matching code expects. A `Named` key that debug-prints as
+/// `Space` is normalized to `" "` too for forward compatibility. Dead
+/// keys and `Unidentified` keys return `None` since no stable name
+/// exists.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::event::key_name;
+/// use winit::keyboard::{Key, NamedKey};
+///
+/// assert_eq!(key_name(&Key::Named(NamedKey::Enter)), Some("Enter".into()));
+/// assert_eq!(key_name(&Key::Character(" ".into())), Some(" ".into()));
+/// assert_eq!(key_name(&Key::Character("a".into())), Some("a".into()));
+/// ```
+#[must_use]
+pub fn key_name(key: &winit::keyboard::Key) -> Option<String> {
+    match key {
+        winit::keyboard::Key::Named(n) => {
+            let name = format!("{n:?}");
+            Some(match name.as_str() {
+                "Space" => " ".to_string(),
+                other => other.to_string(),
+            })
+        }
+        winit::keyboard::Key::Character(c) => Some(c.to_string()),
         _ => None,
     }
 }
@@ -2455,6 +2686,164 @@ mod tests {
             self.log.lock().unwrap().push(name);
             EventResponse::Handled
         }
+    }
+
+    /// A widget recording the drop-phase events it receives.
+    struct DropLog {
+        log: std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl martensite_core::Widget for DropLog {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _constraints: martensite_core::LayoutConstraints,
+        ) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _bounds: Rect) {}
+        fn event(&mut self, cx: &mut martensite_core::EventContext) -> EventResponse {
+            let name = match cx.event {
+                WidgetEvent::DropHover { .. } => "hover",
+                WidgetEvent::DropHoverLeave => "hover-leave",
+                WidgetEvent::Dropped { .. } => "dropped",
+                _ => "other",
+            };
+            self.log.lock().unwrap().push(name);
+            EventResponse::Handled
+        }
+    }
+
+    #[test]
+    fn drop_hover_hit_tests_and_payload_completes() {
+        use martensite_core::DropPayload;
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(
+            hot_node(0.0, 0.0, 200.0, 200.0),
+            Box::new(DropLog {
+                log: std::sync::Arc::clone(&log),
+            }),
+        );
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Moved {
+                position: Vec2::new(10.0, 10.0),
+                action: DropAction::Copy,
+            },
+        );
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Dropped {
+                action: DropAction::Copy,
+            },
+        );
+        assert!(router
+            .dispatch_drop_payload(&mut arena, root, win, DropPayload::Text("x".into()))
+            .is_some());
+        assert_eq!(log.lock().unwrap().as_slice(), &["hover", "dropped"],);
+    }
+
+    #[test]
+    fn drop_left_clears_state() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 100.0, 100.0);
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Moved {
+                position: Vec2::new(5.0, 5.0),
+                action: DropAction::None,
+            },
+        );
+        assert!(router
+            .dispatch_drop_event(&mut arena, root, win, &DropEvent::Left)
+            .is_some());
+        // No in-progress drop remains: a late payload resolves nothing.
+        assert!(router
+            .dispatch_drop_payload(
+                &mut arena,
+                root,
+                win,
+                martensite_core::DropPayload::Text("late".into()),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn drop_payload_without_hover_reaches_root() {
+        use martensite_core::DropPayload;
+        let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let root = arena.insert_with_widget(
+            hot_node(0.0, 0.0, 50.0, 50.0),
+            Box::new(DropLog {
+                log: std::sync::Arc::clone(&log),
+            }),
+        );
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+
+        // A positionless drop (no preceding hover) still completes —
+        // the payload falls back to the root widget.
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Dropped {
+                action: DropAction::None,
+            },
+        );
+        assert!(router
+            .dispatch_drop_payload(
+                &mut arena,
+                root,
+                win,
+                DropPayload::Files(vec!["/tmp/a".into()]),
+            )
+            .is_some());
+        assert_eq!(log.lock().unwrap().as_slice(), &["dropped"]);
+    }
+
+    #[test]
+    fn drop_payload_with_no_drop_in_progress_is_ignored() {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 10.0, 10.0);
+        let mut router = EventRouter::new();
+        assert!(router
+            .dispatch_drop_payload(
+                &mut arena,
+                root,
+                WindowId::from_raw(9),
+                martensite_core::DropPayload::Text("stray".into()),
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn key_name_maps_named_and_character_keys() {
+        use winit::keyboard::{Key, NamedKey};
+        assert_eq!(
+            key_name(&Key::Named(NamedKey::Escape)),
+            Some("Escape".into())
+        );
+        assert_eq!(key_name(&Key::Character(" ".into())), Some(" ".into()));
+        assert_eq!(key_name(&Key::Character("z".into())), Some("z".into()));
+        assert_eq!(
+            key_name(&Key::Unidentified(winit::keyboard::NativeKey::Unidentified)),
+            None
+        );
     }
 
     #[test]

@@ -91,6 +91,23 @@ pub mod icons;
 pub mod text_paint;
 pub mod widgets;
 
+/// Canonical windowed runner: winit `ApplicationHandler` + GPU
+/// + `WidgetArena` + `EventRouter` composition, so apps provide a root
+/// widget instead of re-implementing the event loop. Native-only —
+/// `wasm32-unknown-unknown` apps drive the same widgets through
+/// `martensite-web`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use martensite::runner::RunnerConfig;
+///
+/// let cfg = RunnerConfig::new("App").with_size(1024.0, 768.0);
+/// assert_eq!(cfg.title, "App");
+/// ```
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub mod runner;
+
 pub use martensite_access as access;
 pub use martensite_blessed as blessed;
 pub use martensite_clipboard as clipboard;

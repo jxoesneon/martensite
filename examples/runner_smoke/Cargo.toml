@@ -1,0 +1,20 @@
+[package]
+name = "runner_smoke"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+homepage.workspace = true
+description = "Minimal consumer of `martensite::runner` — the canonical windowed runner composing winit + GPU + WidgetArena + EventRouter."
+publish = false
+
+[dependencies]
+martensite = { workspace = true, features = ["vello"] }
+glam = { workspace = true }
+
+[lints]
+workspace = true

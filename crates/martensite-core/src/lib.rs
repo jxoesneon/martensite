@@ -62,7 +62,7 @@ pub use paint::{
 #[cfg(feature = "devtools-timemachine")]
 pub use snapshot::{ArenaRestoreError, ArenaState, TimemachineState};
 pub use widget::{
-    A11yEmittedNode, AccessibilityContext, DummyWidget, EventContext, EventResponse,
+    A11yEmittedNode, AccessibilityContext, DropPayload, DummyWidget, EventContext, EventResponse,
     LayoutConstraints, LayoutContext, OverlayA11yRef, PaintContext, PointerButton, RenderMinimum,
     SemanticAction, UnderflowPolicy, Widget, WidgetEvent,
 };

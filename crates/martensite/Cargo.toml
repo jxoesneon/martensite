@@ -48,6 +48,11 @@ accesskit = { workspace = true }
 glam = { workspace = true }
 kurbo = { workspace = true }
 taffy = { workspace = true }
+# Native-only: the `runner` module hosts a winit `ApplicationHandler`
+# (web apps drive the same widgets through `martensite-web`).
+winit = { workspace = true }
+pollster = { workspace = true }
+tracing = { workspace = true }
 parking_lot = { workspace = true }
 unicode-segmentation = { workspace = true }
 # Monotonic clock that is `std::time::Instant` on native and
@@ -105,6 +110,10 @@ decoder-videotoolbox = ["martensite-media/decoder-videotoolbox"]
 decoder-mf = ["martensite-media/decoder-mf"]
 decoder-vaapi = ["martensite-media/decoder-vaapi"]
 decoder-ffmpeg = ["martensite-media/decoder-ffmpeg"]
+# Enables the Vello GPU compute dispatch path in `RenderOrchestrator`
+# (forwards to `martensite-wgpu/vello`). When disabled the GPU mode builds
+# the scene but presents via the TinySkia CPU upload path only.
+vello = ["martensite-wgpu/vello"]
 # Dev-channel IPC server for devtools and MCP attach (ADR-0038). Exposes
 # `martensite::dev_channel`; set MARTENSITE_DEV_CHANNEL=1 in a debug build
 # to serve the session socket.

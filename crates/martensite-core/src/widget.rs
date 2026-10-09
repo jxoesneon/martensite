@@ -494,6 +494,60 @@ pub enum WidgetEvent {
     /// `martensite-access` into [`SemanticAction`] and dispatched
     /// through the normal event pipeline.
     SemanticAction(SemanticAction),
+    /// An external drag (OS file/URI/text payload) moved over the
+    /// widget's bounds — the hover half of drag-and-drop. Sent on
+    /// `Entered`/`Moved` transitions so the widget can paint a
+    /// drop-target affordance; paired with [`DropHoverLeave`].
+    ///
+    /// [`DropHoverLeave`]: Self::DropHoverLeave
+    DropHover {
+        /// Window-space position of the drag.
+        position: Vec2,
+    },
+    /// An external drag left the widget's bounds or was cancelled
+    /// without dropping.
+    DropHoverLeave,
+    /// External content was dropped on the widget. The payload is
+    /// delivered after the platform data transfer resolves, which is
+    /// asynchronous on some platforms — `position` is the last
+    /// reported drag position and may be `None` if the OS never
+    /// supplied one.
+    Dropped {
+        /// Last reported window-space drag position, if any.
+        position: Option<Vec2>,
+        /// The delivered drop payload.
+        payload: DropPayload,
+    },
+}
+
+/// The data delivered by a completed OS drag-and-drop operation.
+///
+/// Produced by the window layer after it resolves the platform data
+/// transfer (`winit`'s `DataTransferReceived`): URI lists that resolve
+/// to local files become [`DropPayload::Files`], other URI lists stay
+/// [`DropPayload::Uris`], and text/binary payloads map to
+/// [`DropPayload::Text`]/[`DropPayload::Bytes`].
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::DropPayload;
+///
+/// let payload = DropPayload::Files(vec!["/tmp/a.png".into()]);
+/// assert!(matches!(payload, DropPayload::Files(_)));
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum DropPayload {
+    /// Local filesystem paths (from a `text/uri-list` drop that
+    /// resolved to `file://` URIs).
+    Files(Vec<std::path::PathBuf>),
+    /// URI strings that did not resolve to local files.
+    Uris(Vec<String>),
+    /// Plain UTF-8 text.
+    Text(String),
+    /// An arbitrary binary payload.
+    Bytes(Vec<u8>),
 }
 
 /// A semantic action an assistive technology requests of a widget.
@@ -590,7 +644,9 @@ impl WidgetEvent {
             Self::PointerMoved { position }
             | Self::PointerPressed { position, .. }
             | Self::PointerReleased { position, .. }
-            | Self::Scroll { position, .. } => Some(*position),
+            | Self::Scroll { position, .. }
+            | Self::DropHover { position } => Some(*position),
+            Self::Dropped { position, .. } => *position,
             _ => None,
         }
     }

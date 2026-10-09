@@ -59,6 +59,7 @@ members = [
     "examples/industrial_dashboard",
     "examples/ios_demo",
     "examples/morph_viewer",
+    "examples/runner_smoke",
     "examples/web",
     "examples/widget_catalog",
     "benches/bench_suite",
