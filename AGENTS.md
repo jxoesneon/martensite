@@ -60,6 +60,28 @@ respectively) and opt out of the doc-example requirement via
 They are the only crates in the workspace that do not need compilable
 doctest examples for every public item.
 
+### Tag & release-line hygiene (humans and agents alike)
+
+- **Tag only SHAs whose full CI is green on the remote.** A tag push fires
+  `publish.yml`; if the tag lands on a commit whose gates haven't run — or
+  failed — the pipeline either aborts mid-flight or publishes something
+  nobody verified.
+- **Check the release range before choosing the number.** Run
+  `git log --oneline <last-tag>..HEAD` and audit every commit: any `feat`
+  or public-API change forces a **minor** bump (patch carries fixes only),
+  and every commit in the range must be covered by the CHANGELOG section.
+  An idle checkout can silently sweep commits others landed into your tag.
+- **Verify before pushing, not after.** The Verification Checklist below —
+  including `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
+  (which catches `rustdoc::redundant-explicit-links` and friends) — applies
+  to every push to `main`, not only release tags; `main` is the release
+  line.
+
+**What went wrong before**: a patch tag was created on a stale checkout
+that had accumulated a `feat` commit and a doc-build-breaking change; the
+tag-triggered publish run had to be cancelled and the remote tag deleted
+before it could release.
+
 ## CI — Known Pitfalls
 
 ### 4. Test with BOTH default and all features

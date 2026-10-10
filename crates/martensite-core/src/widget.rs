@@ -1732,7 +1732,7 @@ pub trait Widget: Send + Sync + 'static {
 
     /// Whether this widget's owning controller has been dropped —
     /// consulted **only on overlay popup content** by
-    /// [`OverlayLayer`](crate::overlay::OverlayLayer).
+    /// [`OverlayLayer`].
     ///
     /// Popups live in the overlay layer, not inside their owner's
     /// widget tree, so replacing an owner (swapping one menu bar for

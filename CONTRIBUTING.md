@@ -68,7 +68,21 @@ cargo deny check bans
 
 # Ensure no unintended breaking changes to public APIs
 cargo semver-checks
+
+# Documentation builds are a hard CI gate — run before pushing
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
+
+### Release-line rules
+
+* A `feat` commit (or any public-API addition) means the next release is a
+  **minor** bump, never a patch. Check `git log --oneline <last-tag>..HEAD`
+  before assuming the release number.
+* Every commit landing on `main` must be covered by the CHANGELOG section
+  for the release it will ship in — `main` is the release line.
+* `AGENTS.md` documents the full pre-push verification checklist and the
+  release-governance rules; it applies to human contributors exactly as
+  written.
 
 ## 4. Submitting an RFC
 
