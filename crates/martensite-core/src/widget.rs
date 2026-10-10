@@ -1730,6 +1730,32 @@ pub trait Widget: Send + Sync + 'static {
         false
     }
 
+    /// Whether this widget's owning controller has been dropped —
+    /// consulted **only on overlay popup content** by
+    /// [`OverlayLayer`](crate::overlay::OverlayLayer).
+    ///
+    /// Popups live in the overlay layer, not inside their owner's
+    /// widget tree, so replacing an owner (swapping one menu bar for
+    /// another) leaves the popup entry behind: still painted, still
+    /// hit-tested, but with no controller left to drain its state —
+    /// a zombie. Popup content whose shared controller state went
+    /// defunct answers `true` here and the layer closes the entry on
+    /// the next `layout_pass`, before another event or frame can
+    /// reach it.
+    ///
+    /// Default: `false` — ordinary widgets never report orphaned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DummyWidget, Widget};
+    ///
+    /// assert!(!DummyWidget.is_orphaned());
+    /// ```
+    fn is_orphaned(&self) -> bool {
+        false
+    }
+
     /// Pending-content placeholder painted *instead of* this widget's
     /// normal body and children while [`Widget::is_loading`] holds.
     ///

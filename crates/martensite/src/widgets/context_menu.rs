@@ -248,6 +248,17 @@ impl ContextMenu {
     }
 }
 
+impl Drop for ContextMenu {
+    fn drop(&mut self) {
+        // Popups live in the overlay layer, out of the widget tree's
+        // reach — mark the shared state defunct so live entries
+        // self-report `Widget::is_orphaned` and get swept.
+        if let Ok(mut state) = self.stack.shared().lock() {
+            state.mark_defunct();
+        }
+    }
+}
+
 impl Widget for ContextMenu {
     #[cfg(feature = "devtools-timemachine")]
     fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {

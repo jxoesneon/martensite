@@ -400,6 +400,11 @@ pub struct MenuState {
     /// The depth `typeahead` was accumulated against — a move to a
     /// different menu level resets the buffer.
     typeahead_depth: usize,
+    /// Set when the owning controller (`MenuBar`, `MenuButton`,
+    /// `ContextMenu`) is dropped — popup `Menu` surfaces report
+    /// `Widget::is_orphaned` so the overlay layer sweeps the entries
+    /// instead of leaving zombies nobody drains.
+    defunct: bool,
 }
 
 impl MenuState {
@@ -422,6 +427,7 @@ impl MenuState {
             row_anchors: Vec::new(),
             typeahead: String::new(),
             typeahead_depth: 0,
+            defunct: false,
         }
     }
 
@@ -693,6 +699,17 @@ impl MenuState {
     /// this to close the stack while leaving the path for the app.
     pub fn has_activated(&self) -> bool {
         self.activated.is_some()
+    }
+
+    /// Marks the state defunct — the owning controller is gone, so
+    /// popup surfaces over this state self-report as orphaned.
+    pub(crate) fn mark_defunct(&mut self) {
+        self.defunct = true;
+    }
+
+    /// Whether the owning controller was dropped.
+    pub(crate) fn is_defunct(&self) -> bool {
+        self.defunct
     }
 
     /// Test/support helper: activates row `row` of the root menu.
@@ -1561,6 +1578,10 @@ impl Widget for Menu {
     fn debug_name(&self) -> &'static str {
         // Submenu cascades are the widget's purpose.
         "Menu@lint:menu-depth"
+    }
+
+    fn is_orphaned(&self) -> bool {
+        self.shared.lock().map(|s| s.is_defunct()).unwrap_or(true)
     }
 
     fn measure(&mut self, cx: &mut LayoutContext, constraints: LayoutConstraints) -> Vec2 {

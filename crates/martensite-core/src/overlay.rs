@@ -960,6 +960,21 @@ impl OverlayLayer {
     /// ```
     pub fn layout_pass(&mut self) {
         let _intl = self.install_intl();
+        // Popup content whose owning controller was dropped — a
+        // replaced menu bar leaves its entries behind, still painted
+        // and hit-tested but with no `MenuStack` left to drain them.
+        // Content reports the loss via `Widget::is_orphaned`; sweep
+        // before hit-testing or another frame can reach the zombies.
+        let orphaned: Vec<u64> = self
+            .entries
+            .iter()
+            .filter(|e| e.content.is_orphaned())
+            .map(|e| e.id)
+            .collect();
+        for id in orphaned {
+            self.dismissed.push_back(id);
+            self.close(id);
+        }
         let viewport = self.viewport;
         for entry in &mut self.entries {
             if !entry.needs_layout {
@@ -2141,5 +2156,37 @@ mod tests {
         assert_eq!(layer.dispatch_event(&key), EventResponse::Ignored);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert!(layer.is_open(id));
+    }
+
+    /// Popup content whose owning controller was dropped reports
+    /// `Widget::is_orphaned` — the layer sweeps it on the next layout
+    /// pass so it cannot keep painting and hit-testing as a zombie.
+    struct OrphanedPopup(bool);
+
+    impl Widget for OrphanedPopup {
+        fn measure(&mut self, _cx: &mut LayoutContext, _c: LayoutConstraints) -> Vec2 {
+            Vec2::new(60.0, 40.0)
+        }
+        fn layout(&mut self, _cx: &mut LayoutContext, _b: Rect) {}
+        fn is_orphaned(&self) -> bool {
+            self.0
+        }
+    }
+
+    #[test]
+    fn layout_pass_sweeps_orphaned_popups() {
+        let mut layer = layer();
+        let orphan = layer.open(
+            Box::new(OrphanedPopup(true)),
+            OverlayAnchor::Pointer(Vec2::new(10.0, 10.0)),
+        );
+        let live = layer.open(
+            Box::new(OrphanedPopup(false)),
+            OverlayAnchor::Pointer(Vec2::new(200.0, 200.0)),
+        );
+        layer.layout_pass();
+        assert!(!layer.is_open(orphan), "orphaned entry must be swept");
+        assert!(layer.is_open(live), "healthy entries are untouched");
+        assert_eq!(layer.take_dismissed(), Some(orphan));
     }
 }

@@ -157,6 +157,10 @@ pub struct MenuBar {
     buttons: Vec<MenuBarButton>,
     /// Currently open menu index.
     active: Option<usize>,
+    /// Menu index snapshotted when a dismissal closed the popup while an
+    /// activation was pending — `take_activated` reports it as `path[0]`
+    /// even though `active` has already been reset.
+    activated_menu: Option<usize>,
     /// Keyboard navigation position while no menu is open.
     focused: Option<usize>,
     /// Whether the bar itself holds keyboard focus — gates the
@@ -203,6 +207,7 @@ impl MenuBar {
             menus: Vec::new(),
             buttons: Vec::new(),
             active: None,
+            activated_menu: None,
             focused: None,
             has_focus: false,
             hovered: None,
@@ -280,6 +285,41 @@ impl MenuBar {
         self.menus.get(index).map(|m| m.label.as_str())
     }
 
+    /// Replaces menu `index`'s items in place — the enablement-refresh
+    /// path. Rebuilding the whole bar drops its popup stack and shared
+    /// state, orphaning any live popup; `set_items` keeps both so an
+    /// open menu keeps working across a model update.
+    ///
+    /// When the menu is currently open the live popup's items are
+    /// refreshed too (highlight and submenu navigation reset, the way
+    /// a menu switch does). Returns `false` for out-of-range `index`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{MenuBar, MenuItem};
+    ///
+    /// let mut bar = MenuBar::new().menu("File", vec![MenuItem::action("New")]);
+    /// assert!(bar.set_items(0, vec![MenuItem::action("New"), MenuItem::action("Open")]));
+    /// assert!(!bar.set_items(5, vec![]));
+    /// ```
+    pub fn set_items(&mut self, index: usize, items: Vec<MenuItem>) -> bool {
+        if index >= self.menus.len() {
+            return false;
+        }
+        if self.active == Some(index) {
+            let anchor = self
+                .button_bounds
+                .get(index)
+                .copied()
+                .map(OverlayAnchor::Bounds)
+                .unwrap_or_else(|| OverlayAnchor::Bounds(self.cached_bounds));
+            self.stack.switch_items(items.clone(), anchor, false);
+        }
+        self.menus[index].items = items;
+        true
+    }
+
     /// Whether a menu popup is currently open.
     ///
     /// # Examples
@@ -337,6 +377,7 @@ impl MenuBar {
     /// assert!(!bar.is_open());
     /// ```
     pub fn close_menus(&mut self) {
+        self.stash_activation_source();
         self.store_back();
         self.active = None;
         *self.expanded.lock().expect("bar state poisoned") = None;
@@ -344,8 +385,8 @@ impl MenuBar {
     }
 
     /// Drains the pending activation path — the item the user picked
-    /// since the last call, as a [`MenuPath`] from the open menu's
-    /// root.
+    /// since the last call, as a [`MenuPath`] rooted at the bar:
+    /// `[menu_index, item_index, submenu_index…]`.
     ///
     /// # Examples
     ///
@@ -356,13 +397,31 @@ impl MenuBar {
     /// assert_eq!(bar.take_activated(), None);
     /// ```
     pub fn take_activated(&mut self) -> Option<MenuPath> {
-        let path = self.stack.take_activated();
-        if path.is_some() {
-            self.store_back();
-            self.active = None;
-            *self.expanded.lock().expect("bar state poisoned") = None;
+        let inner = self.stack.take_activated()?;
+        let menu = self.activated_menu.take().or(self.active)?;
+        self.store_back();
+        self.active = None;
+        *self.expanded.lock().expect("bar state poisoned") = None;
+        let mut path = Vec::with_capacity(inner.len() + 1);
+        path.push(menu);
+        path.extend(inner);
+        Some(path)
+    }
+
+    /// Records which open menu produced a pending activation. Called at
+    /// every site that clears `active` so `take_activated` can still
+    /// attribute the path after the popup has been dismissed.
+    fn stash_activation_source(&mut self) {
+        if self.active.is_some()
+            && self
+                .stack
+                .shared()
+                .lock()
+                .expect("menu state poisoned")
+                .has_activated()
+        {
+            self.activated_menu = self.active;
         }
-        path
     }
 
     /// Writes the live (possibly toggled) item tree in shared state
@@ -397,6 +456,7 @@ impl MenuBar {
             .copied()
             .map(OverlayAnchor::Bounds)
             .unwrap_or_else(|| OverlayAnchor::Bounds(self.cached_bounds));
+        self.stash_activation_source();
         self.stack.switch_items(items, anchor, via_keyboard);
         self.active = Some(index);
         self.focused = Some(index);
@@ -417,6 +477,19 @@ impl MenuBar {
             } else {
                 self.open_menu(index, true);
             }
+        }
+    }
+}
+
+impl Drop for MenuBar {
+    fn drop(&mut self) {
+        // Popups live in the arena overlay, out of the widget tree's
+        // reach — a dropped bar would leave them painting and
+        // hit-testing as zombies. Marking the shared state defunct
+        // lets them self-report `Widget::is_orphaned` so the layer
+        // sweeps them on the next layout pass.
+        if let Ok(mut state) = self.stack.shared().lock() {
+            state.mark_defunct();
         }
     }
 }
@@ -631,6 +704,7 @@ impl Widget for MenuBar {
         // The layer dismissed the open menu (outside press, Escape at
         // the root) — store back item mutations and reset.
         if self.active.is_some() && !self.stack.is_open() {
+            self.stash_activation_source();
             self.store_back();
             self.active = None;
             *self.expanded.lock().expect("bar state poisoned") = None;
@@ -911,7 +985,7 @@ mod tests {
         // Activate through the shared state (as a row would).
         bar.stack.shared().lock().unwrap().activate_for_test(1);
         bar.sync_overlay(&mut o);
-        assert_eq!(bar.take_activated(), Some(vec![1]));
+        assert_eq!(bar.take_activated(), Some(vec![0, 1]));
         assert!(!bar.is_open());
         assert_eq!(bar.active_menu(), None);
     }
@@ -933,7 +1007,7 @@ mod tests {
         // Toggle the checkable through the live state.
         bar.stack.shared().lock().unwrap().activate_for_test(0);
         bar.sync_overlay(&mut o);
-        assert_eq!(bar.take_activated(), Some(vec![0]));
+        assert_eq!(bar.take_activated(), Some(vec![0, 0]));
         // Reopen — the toggle persisted back into the canonical items.
         bar.open_menu(0, false);
         bar.sync_overlay(&mut o);
@@ -991,5 +1065,47 @@ mod tests {
             unfocused,
             "focus ring lingered after FocusLost"
         );
+    }
+
+    #[test]
+    fn set_items_refreshes_open_menu_and_keeps_stack() {
+        let mut bar = bar();
+        laid_out(&mut bar);
+        let mut o = overlay();
+        bar.open_menu(0, false);
+        bar.sync_overlay(&mut o);
+        o.layout_pass();
+        assert_eq!(o.len(), 1);
+        // Enablement refresh in place — the popup must survive.
+        assert!(bar.set_items(
+            0,
+            vec![
+                MenuItem::action("New"),
+                MenuItem::action("Open"),
+                MenuItem::action("Save"),
+            ]
+        ));
+        bar.sync_overlay(&mut o);
+        assert!(bar.is_open());
+        // Activation still drains through the same stack.
+        bar.stack.shared().lock().unwrap().activate_for_test(2);
+        bar.sync_overlay(&mut o);
+        assert_eq!(bar.take_activated(), Some(vec![0, 2]));
+        assert!(!bar.is_open());
+    }
+
+    #[test]
+    fn dropped_bar_orphans_popup_for_sweep() {
+        let mut o = overlay();
+        {
+            let mut bar = bar();
+            laid_out(&mut bar);
+            bar.open_menu(0, false);
+            bar.sync_overlay(&mut o);
+            o.layout_pass();
+            assert_eq!(o.len(), 1);
+        } // The bar is gone — its popup is a zombie.
+        o.layout_pass();
+        assert_eq!(o.len(), 0, "orphaned popup was not swept");
     }
 }
