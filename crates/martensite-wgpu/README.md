@@ -37,7 +37,7 @@ Add `martensite-wgpu` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-martensite-wgpu = "0.21.1"
+martensite-wgpu = "0.22.0"
 ```
 
 Configuring the render orchestrator:

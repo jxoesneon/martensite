@@ -18,8 +18,8 @@ a `cdylib` so GameActivity can `dlopen` it:
 crate-type = ["cdylib"]
 
 [dependencies]
-martensite = "0.21.1"
-martensite-window = "0.21.1"
+martensite = "0.22.0"
+martensite-window = "0.22.0"
 ```
 
 Export the entry point and hand the `AndroidApp` to winit via

@@ -7,9 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.21.1] - 2026-10-08
+## [0.22.0] - 2026-10-10
 
-### Fixed — Web Surface Extents
+### Added — Canonical Runner & Widget Drop Delivery
+
+- **`martensite::runner` — canonical native app runner** — Composes the
+  winit `ApplicationHandler` → `GpuContext` + `SurfaceWrapper` +
+  `RenderOrchestrator` → `WidgetArena` + `EventRouter` pipeline behind
+  `RunnerConfig` (native-only), so applications provide a root widget
+  instead of re-implementing ~500 lines of event-loop plumbing.
+  Includes custom GPU factory and instance-descriptor hooks, per-frame
+  drains, a startup callback, accepted-drop actions, and a
+  `LaunchError` distinguishing GPU-init failure from window/event-loop
+  failure. `examples/runner_smoke` is the in-tree reference consumer.
+
+- **Widget drop delivery** — `WidgetEvent` gains `DropHover`,
+  `DropHoverLeave`, and `Dropped` carrying a `DropPayload` (files,
+  URIs, text, bytes); `EventRouter` gains `dispatch_drop_event` and
+  `dispatch_drop_payload` with hover hit-testing, target transitions,
+  per-window drag state, and root-widget fallback for positionless
+  drops — `EventKind::Dnd` now has a full dispatch path. Also: facade
+  `vello` feature passthrough and a shared `event::key_name` helper.
+
+### Fixed — Menu Popups & Web Surface Extents
+
+- **Orphaned menu popups** — Replacing or dropping a menu-bar owner
+  left popup entries painted and hit-testable with no live controller;
+  the layout pass now sweeps orphaned popups, `MenuBar` refreshes its
+  items in place without collapsing the open stack, and activated-item
+  paths are bar-rooted so they survive popup dismissal before the
+  drain.
 
 - **WebGL2 oversize-surface crash** — `Surface::configure` validates the
   requested extent against the device's `max_texture_dimension_2d`, but
