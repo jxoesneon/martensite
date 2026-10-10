@@ -8,8 +8,8 @@
 //! [`EventRouter`](martensite_window::event::EventRouter) — so
 //! applications provide a root widget and window configuration instead
 //! of re-implementing the event loop. This is the pipeline the
-//! `examples/` binaries used to hand-roll (~500 lines each); it is
-//! exercised there and by the craft suite.
+//! `examples/` binaries used to hand-roll (~500 lines each);
+//! `examples/runner_smoke` is the in-tree reference consumer.
 //!
 //! ```no_run
 //! use martensite::runner::{self, RunnerConfig};
@@ -28,7 +28,7 @@
 use std::sync::Arc;
 
 use glam::Vec2;
-use martensite_core::{LayoutContext, PaintList, Rect, WidgetArena, WidgetId};
+use martensite_core::{LayoutConstraints, LayoutContext, PaintList, Rect, WidgetArena, WidgetId};
 use martensite_dnd::DndPlatform;
 use martensite_focus::FocusManager;
 use martensite_wgpu::wgpu;
@@ -121,6 +121,7 @@ impl std::error::Error for LaunchError {}
 ///     .with_decorations(true);
 /// assert_eq!(cfg.title, "Editor");
 /// ```
+#[non_exhaustive]
 pub struct RunnerConfig {
     /// Window title.
     pub title: String,
@@ -349,8 +350,13 @@ struct Runner {
     /// `DataTransferReceived` can be correlated to this app.
     pending_drops: Vec<AsyncRequestSerial>,
     /// Shared cell [`run`] reads after `run_app` consumes the handler,
-    /// so a GPU bring-up failure reaches the caller classified.
-    gpu_init_error: Arc<std::sync::Mutex<Option<String>>>,
+    /// so a classified launch failure (window, GPU, or surface
+    /// configuration) reaches the caller instead of looking like a
+    /// clean exit.
+    launch_error: Arc<std::sync::Mutex<Option<LaunchError>>>,
+    /// Rebuilt each frame — retained so `build_paint_list` reuses its
+    /// command-buffer capacity instead of reallocating.
+    paint_list: PaintList,
     needs_layout: bool,
     last_frame: Instant,
 }
@@ -363,14 +369,46 @@ impl Runner {
             .unwrap_or(1.0)
     }
 
+    /// Clamps a physical extent to the GPU's `max_texture_dimension_2d`
+    /// (proportionally, preserving aspect). Downlevel native adapters
+    /// can cap the surface extent below a HiDPI window's device-pixel
+    /// size — the same oversize class the web clamp covers.
+    fn clamped_extent(&self, w: u32, h: u32) -> (u32, u32) {
+        match &self.gpu {
+            Some(gpu) => martensite_wgpu::surface::clamp_extent(
+                w,
+                h,
+                gpu.device.limits().max_texture_dimension_2d,
+            ),
+            None => (w, h),
+        }
+    }
+
     fn layout(&mut self, w: u32, h: u32) {
         let (Some(arena), Some(root)) = (self.arena.as_mut(), self.root) else {
             return;
         };
+        // Manual layout bypasses `LayoutEngine` — install the ambient
+        // intl and measurer guards so widget `measure` calls see the
+        // same direction/locale and glyph metrics the paint pass will
+        // use (otherwise text lays out zero-height).
+        let _intl = arena.install_ambient_intl();
+        let _measurer = arena
+            .text_painter_shared()
+            .map(martensite_core::paint::install_ambient_measurer);
         let scale = arena.scale_factor();
         let r = Rect::new(0.0, 0.0, w as f32, h as f32);
         arena.overlay_mut().set_viewport(r);
         if let Some((hot, cold)) = arena.get_both_mut(root) {
+            // `Flex` sizes its children in `measure`; `layout` alone
+            // leaves every row at zero height.
+            cold.widget.measure(
+                &mut LayoutContext { hot, scale },
+                LayoutConstraints {
+                    min_size: Vec2::ZERO,
+                    max_size: Vec2::new(r.width(), r.height()),
+                },
+            );
             hot.bounds = r;
             cold.widget.layout(&mut LayoutContext { hot, scale }, r);
         }
@@ -387,8 +425,8 @@ impl Runner {
         if let Some(id) = self.router.take_focus_request() {
             self.focus.apply_focus_request(arena, id);
         }
-        let mut list = PaintList::new();
-        arena.build_paint_list(root, &mut list);
+        self.paint_list.clear();
+        arena.build_paint_list(root, &mut self.paint_list);
 
         let (Some(window), Some(gpu), Some(surface), Some(orchestrator)) = (
             self.window.as_ref(),
@@ -398,27 +436,81 @@ impl Runner {
         ) else {
             return;
         };
-        orchestrator.render(&list, &self.recovery);
-        if let Err(err) = orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {
-            self.recovery.handle_surface_error(err);
-            let size = window.surface_size();
-            let _ = surface.resize(&gpu.device, size.width.max(1), size.height.max(1));
+        orchestrator.render(&self.paint_list, &self.recovery);
+        match orchestrator.render_to_surface(&gpu.device, &gpu.queue, surface) {
+            Ok(()) => {
+                // Marks `Restored`/`FallbackCpu` recoveries complete;
+                // a no-op while `Active`.
+                self.recovery.repaint_completed();
+                // "Started" means a frame actually presented — not
+                // merely attempted.
+                if let Some(started) = self.config.on_started.take() {
+                    started();
+                }
+            }
+            Err(err) => {
+                if self.recovery.handle_surface_error(err) {
+                    // Transient acquire failure — reconfigure in place.
+                    // Non-transient errors entered the recovery path
+                    // instead of spinning resize every frame.
+                    let size = window.surface_size();
+                    let (w, h) = martensite_wgpu::surface::clamp_extent(
+                        size.width.max(1),
+                        size.height.max(1),
+                        gpu.device.limits().max_texture_dimension_2d,
+                    );
+                    let _ = surface.resize(&gpu.device, w, h);
+                }
+            }
         }
         window.request_redraw();
-        if let Some(started) = self.config.on_started.take() {
-            started();
-        }
     }
 
     fn create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) -> Result<(), LaunchError> {
-        if self.window.is_some() {
+        // The window, arena, and root widget are one-shot: they survive
+        // a suspend/resume cycle, so `make_root` (an `FnOnce`) runs
+        // exactly once. Only the GPU stack is rebuilt on resume.
+        if self.window.is_none() {
+            let window: Arc<dyn Window> = event_loop
+                .create_window(self.config.window_attributes())
+                .map_err(LaunchError::Window)?
+                .into();
+
+            // Arena: platform preferences + caller's root widget.
+            let scale = window.scale_factor() as f32;
+            let mut arena = WidgetArena::new();
+            arena.set_theme(
+                martensite_theme::ThemeDictionary::new()
+                    .dark_theme()
+                    .clone(),
+            );
+            arena.set_scale_factor(scale);
+            arena.set_text_painter(crate::text_paint::shared_painter());
+            martensite_window::prefs::apply_platform_preferences(&mut arena);
+            let make_root = self.make_root.take().ok_or_else(|| {
+                LaunchError::GpuInit("runner already consumed its root factory".into())
+            })?;
+            let root = make_root(&mut arena, scale);
+            self.focus.set_root(root);
+            self.focus.set_focus_unchecked(root);
+
+            self.window = Some(window);
+            self.arena = Some(arena);
+            self.root = Some(root);
+            self.needs_layout = true;
+        }
+
+        // GPU/surface/orchestrator come up whenever any is missing —
+        // `destroy_surfaces` (Android suspend) drops them under a live
+        // window and the first `can_create_surfaces` after resume
+        // rebuilds them here.
+        if self.gpu.is_some() && self.surface.is_some() && self.orchestrator.is_some() {
             return Ok(());
         }
-        let window: Arc<dyn Window> = event_loop
-            .create_window(self.config.window_attributes())
-            .map_err(LaunchError::Window)?
-            .into();
-
+        let window = Arc::clone(self.window.as_ref().expect("window created above"));
+        // A custom `gpu_factory`/`instance_descriptor` applies to the
+        // first bring-up only; a resume rebuild uses the default
+        // `GpuContext::for_surface` path.
         let descriptor = self
             .config
             .instance_descriptor
@@ -439,59 +531,34 @@ impl Runner {
         }));
 
         let size = window.surface_size();
+        // Clamp to the device's texture extent — downlevel adapters can
+        // cap `max_texture_dimension_2d` below the window's device-pixel
+        // size; `configure`/`get_current_texture` would fail otherwise.
+        let (w, h) = martensite_wgpu::surface::clamp_extent(
+            size.width.max(1),
+            size.height.max(1),
+            gpu.device.limits().max_texture_dimension_2d,
+        );
         let mut surface = SurfaceWrapper::new(raw_surface);
         surface.set_pacing(self.config.present_mode);
         surface
-            .configure(
-                &gpu.device,
-                &gpu.adapter,
-                size.width.max(1),
-                size.height.max(1),
-                self.config.backdrop,
-            )
+            .configure(&gpu.device, &gpu.adapter, w, h, self.config.backdrop)
             .map_err(|e| LaunchError::SurfaceConfig(e.to_string()))?;
         if self.config.honor_cpu_env && std::env::var("MARTENSITE_CPU").is_ok() {
             self.config.orchestrator.prefer_cpu = true;
         }
-        let mut orchestrator = RenderOrchestrator::new(
-            size.width.max(1),
-            size.height.max(1),
-            self.config.orchestrator.clone(),
-        )
-        .map_err(|e| LaunchError::GpuInit(e.to_string()))?;
+        let mut orchestrator = RenderOrchestrator::new(w, h, self.config.orchestrator.clone())
+            .map_err(|e| LaunchError::GpuInit(e.to_string()))?;
         let notify_window = Arc::clone(&window);
         orchestrator.set_pre_present_notify(Some(Box::new(move || {
             notify_window.pre_present_notify();
         })));
 
-        // Arena: platform preferences + caller's root widget.
-        let scale = window.scale_factor() as f32;
-        let mut arena = WidgetArena::new();
-        arena.set_theme(
-            martensite_theme::ThemeDictionary::new()
-                .dark_theme()
-                .clone(),
-        );
-        arena.set_scale_factor(scale);
-        arena.set_text_painter(crate::text_paint::shared_painter());
-        martensite_window::prefs::apply_platform_preferences(&mut arena);
-        let make_root = self.make_root.take().ok_or_else(|| {
-            LaunchError::GpuInit("runner already consumed its root factory".into())
-        })?;
-        let root = make_root(&mut arena, scale);
-        self.focus.set_root(root);
-        self.focus.set_focus_unchecked(root);
-
-        self.window = Some(window);
         self.gpu = Some(gpu);
         self.surface = Some(surface);
         self.orchestrator = Some(orchestrator);
-        self.arena = Some(arena);
-        self.root = Some(root);
         self.needs_layout = true;
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
+        window.request_redraw();
         Ok(())
     }
 }
@@ -499,12 +566,10 @@ impl Runner {
 impl ApplicationHandler for Runner {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         if let Err(err) = self.create_surfaces(event_loop) {
-            if let LaunchError::GpuInit(m) = &err {
-                if let Ok(mut cell) = self.gpu_init_error.lock() {
-                    *cell = Some(m.clone());
-                }
-            }
             tracing::error!("martensite runner: {err}");
+            if let Ok(mut cell) = self.launch_error.lock() {
+                *cell = Some(err);
+            }
             event_loop.exit();
         }
     }
@@ -527,13 +592,14 @@ impl ApplicationHandler for Runner {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::SurfaceResized(size) => {
                 if size.width > 0 && size.height > 0 {
+                    let (w, h) = self.clamped_extent(size.width, size.height);
                     if let (Some(surface), Some(gpu)) = (&mut self.surface, &self.gpu) {
-                        if let Err(err) = surface.resize(&gpu.device, size.width, size.height) {
+                        if let Err(err) = surface.resize(&gpu.device, w, h) {
                             tracing::warn!("martensite runner: surface resize failed: {err}");
                         }
                     }
                     if let Some(o) = &mut self.orchestrator {
-                        o.set_frame_size(size.width, size.height);
+                        o.set_frame_size(w, h);
                     }
                     self.needs_layout = true;
                 }
@@ -720,7 +786,7 @@ pub fn run(
 ) -> Result<(), LaunchError> {
     let event_loop = EventLoop::new().map_err(LaunchError::EventLoop)?;
     event_loop.set_control_flow(config.control_flow);
-    let gpu_init_error = Arc::new(std::sync::Mutex::new(None::<String>));
+    let launch_error = Arc::new(std::sync::Mutex::new(None::<LaunchError>));
     let runner = Runner {
         make_root: Some(Box::new(make_root)),
         config,
@@ -735,15 +801,16 @@ pub fn run(
         orchestrator: None,
         recovery: RecoveryMachine::new(),
         pending_drops: Vec::new(),
-        gpu_init_error: Arc::clone(&gpu_init_error),
+        launch_error: Arc::clone(&launch_error),
+        paint_list: PaintList::new(),
         needs_layout: true,
         last_frame: Instant::now(),
     };
     event_loop.run_app(runner).map_err(LaunchError::EventLoop)?;
-    // `run_app` consumes the handler; read the classified GPU-init
+    // `run_app` consumes the handler; read the classified launch
     // failure back out of the shared cell.
-    if let Some(m) = gpu_init_error.lock().ok().and_then(|g| g.clone()) {
-        return Err(LaunchError::GpuInit(m));
+    if let Some(err) = launch_error.lock().ok().and_then(|mut g| g.take()) {
+        return Err(err);
     }
     Ok(())
 }
