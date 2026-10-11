@@ -25,9 +25,10 @@
 //!
 //! # Limitations
 //!
-//! - No accessibility adapter is wired into the runner yet; the
-//!   widget-catalog path has one, so runner-hosted apps are not exposed
-//!   to assistive technology.
+//! - AccessKit tree updates are pumped from frames and throttled to
+//!   10 Hz (an AT action or focus change publishes at once). Under
+//!   `ControlFlow::Wait` a throttled change waits for the next window
+//!   event; AT actions themselves wake the loop.
 //! - OS drag-and-drop is delivered through the arena's hit-test
 //!   ([`martensite_window::event::EventRouter::dispatch_drop_event`]) to
 //!   the widget under the pointer, not through the `martensite-dnd`
@@ -39,6 +40,8 @@ use std::io::{self, Read};
 use std::sync::Arc;
 
 use glam::Vec2;
+use martensite_access::actions::dispatch_a11y_action;
+use martensite_access::AccessKitAdapter;
 use martensite_core::{
     DropPayload, LayoutConstraints, LayoutContext, PaintList, Rect, WidgetArena, WidgetId,
 };
@@ -59,7 +62,9 @@ use winit::application::ApplicationHandler;
 use winit::data_transfer::{DataTransferId, TypeHint, TypedData};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop};
+use winit::event_loop::{
+    ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop, EventLoopProxy,
+};
 use winit::icon::Icon;
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -334,7 +339,8 @@ impl RunnerConfig {
         self
     }
 
-    /// Builds the [`WindowAttributes`] for this configuration.
+    /// Builds the [`WindowAttributes`] for this configuration. The window
+    /// starts hidden: the AccessKit adapter must exist before it is shown.
     fn window_attributes(&self) -> WindowAttributes {
         let mut attrs = WindowAttributes::default()
             .with_title(self.title.clone())
@@ -342,7 +348,8 @@ impl RunnerConfig {
             .with_resizable(self.resizable)
             .with_decorations(self.decorations)
             .with_transparent(self.transparent)
-            .with_maximized(self.maximized);
+            .with_maximized(self.maximized)
+            .with_visible(false);
         if let Some(min) = self.min_size {
             attrs = attrs.with_min_surface_size(min);
         }
@@ -366,6 +373,41 @@ impl std::fmt::Debug for RunnerConfig {
             .field("accept_drops", &self.accept_drops)
             .finish_non_exhaustive()
     }
+}
+
+/// Minimum interval between AccessKit tree emits: a full-tree update is
+/// expensive, while an AT action or focus change still emits immediately.
+const A11Y_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Hands the staged initial tree to the platform the moment AT attaches.
+struct InitialTree(Arc<std::sync::Mutex<Option<accesskit::TreeUpdate>>>);
+
+impl accesskit::ActivationHandler for InitialTree {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        self.0.lock().ok().and_then(|mut slot| slot.take())
+    }
+}
+
+/// AT actions arrive on the platform's callback thread: queue them, then
+/// wake the event loop so the frame loop drains them even under `Wait`.
+struct QueueActions {
+    queue: Arc<std::sync::Mutex<Vec<accesskit::ActionRequest>>>,
+    wake: EventLoopProxy,
+}
+
+impl accesskit::ActionHandler for QueueActions {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.push(request);
+        }
+        self.wake.wake_up();
+    }
+}
+
+struct NoopDeactivate;
+
+impl accesskit::DeactivationHandler for NoopDeactivate {
+    fn deactivate_accessibility(&mut self) {}
 }
 
 /// Outcome of presenting one frame, decided without touching the GPU.
@@ -504,6 +546,17 @@ struct RunnerCore {
     /// command-buffer capacity instead of reallocating.
     paint_list: PaintList,
     needs_layout: bool,
+    /// AccessKit tree for the root; created by `init_a11y`.
+    a11y_tree: Option<AccessKitAdapter>,
+    /// Actions queued by the platform adapter, drained by `pump_a11y_at`.
+    a11y_actions: Arc<std::sync::Mutex<Vec<accesskit::ActionRequest>>>,
+    /// Initial tree staged for the platform's activation request.
+    a11y_initial: Arc<std::sync::Mutex<Option<accesskit::TreeUpdate>>>,
+    /// Set by an action or focus change: the next pump emits regardless
+    /// of the throttle.
+    a11y_force: bool,
+    a11y_last_emit: Option<Instant>,
+    a11y_last_focus: Option<WidgetId>,
 }
 
 impl RunnerCore {
@@ -521,7 +574,67 @@ impl RunnerCore {
             accepted_transfer: None,
             paint_list: PaintList::new(),
             needs_layout: true,
+            a11y_tree: None,
+            a11y_actions: Arc::new(std::sync::Mutex::new(Vec::new())),
+            a11y_initial: Arc::new(std::sync::Mutex::new(None)),
+            a11y_force: false,
+            a11y_last_emit: None,
+            a11y_last_focus: None,
         }
+    }
+
+    /// Creates the AccessKit tree for the root and stages its initial
+    /// update for the platform adapter. Runs after `init_arena`.
+    fn init_a11y(&mut self) {
+        let (Some(arena), Some(root)) = (self.arena.as_mut(), self.root) else {
+            return;
+        };
+        let mut tree = AccessKitAdapter::new(root);
+        tree.set_toolkit_name("Martensite");
+        tree.set_toolkit_version(env!("CARGO_PKG_VERSION"));
+        tree.set_focus(self.focus.current_focus());
+        let update = tree.build_update(arena);
+        if let Ok(mut slot) = self.a11y_initial.lock() {
+            *slot = Some(update);
+        }
+        self.a11y_tree = Some(tree);
+    }
+
+    /// Drains queued AT actions (decode → dispatch) and syncs focus. Returns
+    /// a tree update when one is due: at once after an action or focus
+    /// change, otherwise at most every `A11Y_EMIT_INTERVAL`.
+    fn pump_a11y_at(&mut self, now: Instant) -> Option<accesskit::TreeUpdate> {
+        let (Some(tree), Some(arena)) = (self.a11y_tree.as_mut(), self.arena.as_mut()) else {
+            return None;
+        };
+        let requests = self
+            .a11y_actions
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default();
+        let mut dispatched = false;
+        for request in requests {
+            if let Some(action) = tree.decode_action(arena, &request) {
+                dispatch_a11y_action(arena, &action);
+                dispatched = true;
+            }
+        }
+        let focus = self.focus.current_focus();
+        tree.set_focus(focus);
+        if dispatched || focus != self.a11y_last_focus {
+            self.a11y_force = true;
+        }
+        let due = self
+            .a11y_last_emit
+            .is_none_or(|last| now.saturating_duration_since(last) >= A11Y_EMIT_INTERVAL);
+        if !(self.a11y_force || due) {
+            return None;
+        }
+        let update = tree.build_update(arena);
+        self.a11y_force = false;
+        self.a11y_last_emit = Some(now);
+        self.a11y_last_focus = focus;
+        Some(update)
     }
 
     /// Builds the arena with platform preferences and the caller's root
@@ -606,11 +719,16 @@ impl RunnerCore {
 
     /// Routes one window event and reports what the shell must do next.
     /// `RedrawRequested` is handled by the shell and is a no-op here.
+    /// `layout_scale` is the per-axis ratio
+    /// ([`martensite_window::surface_to_layout_scale`]) mapping raw
+    /// surface pixels into the — possibly clamped — layout extent;
+    /// `(1.0, 1.0)` when no clamp is in effect.
     fn handle_event(
         &mut self,
         event: &WindowEvent,
         window_id: WindowId,
         scale: f32,
+        layout_scale: (f32, f32),
         platform: &dyn DropPlatform,
     ) -> Effects {
         let mut fx = Effects::default();
@@ -633,6 +751,12 @@ impl RunnerCore {
             WindowEvent::PointerMoved { .. } | WindowEvent::PointerButton { .. } => {
                 if let Some(mut pe) = pointer_event(event) {
                     pe.modifiers = convert_modifiers_state(&self.mods);
+                    // Positions arrive in raw surface pixels; the arena is
+                    // laid out at the clamped extent, so rescale per axis
+                    // (a no-op at unit ratio).
+                    let (sx, sy) = layout_scale;
+                    pe.position.x *= sx;
+                    pe.position.y *= sy;
                     if let (Some(arena), Some(root)) = (self.arena.as_mut(), self.root) {
                         self.router
                             .dispatch_pointer_event(arena, root, window_id, &pe);
@@ -725,9 +849,12 @@ impl RunnerCore {
                 ) {
                     self.accepted_transfer = None;
                 }
-                if let (Some(dropped), Some(arena), Some(root)) =
+                if let (Some(mut dropped), Some(arena), Some(root)) =
                     (dropped, self.arena.as_mut(), self.root)
                 {
+                    // Drag positions arrive in raw surface pixels too;
+                    // rescale into the clamped layout extent.
+                    scale_drop_position(&mut dropped, layout_scale);
                     self.router
                         .dispatch_drop_event(arena, root, window_id, &dropped);
                 }
@@ -834,6 +961,8 @@ struct Runner {
     surface: Option<SurfaceWrapper<'static>>,
     orchestrator: Option<RenderOrchestrator>,
     recovery: RecoveryMachine,
+    /// Platform AccessKit adapter; created before the window is shown.
+    a11y_platform: Option<accesskit_winit::Adapter>,
     /// Shared cell [`run`] reads after `run_app` consumes the handler,
     /// so a classified launch failure (window, GPU, or surface
     /// configuration) reaches the caller instead of looking like a
@@ -895,6 +1024,11 @@ impl Runner {
     }
 
     fn frame(&mut self, dt: Duration) {
+        if let Some(update) = self.core.pump_a11y_at(Instant::now()) {
+            if let Some(platform) = self.a11y_platform.as_mut() {
+                platform.update_if_active(|| update);
+            }
+        }
         let Some(paint) = self.core.prepare_frame(dt) else {
             return;
         };
@@ -947,6 +1081,18 @@ impl Runner {
                 .map_err(LaunchError::Window)?
                 .into();
             self.core.init_arena(window.scale_factor() as f32)?;
+            self.core.init_a11y();
+            // The adapter must exist before the window is first shown.
+            self.a11y_platform = Some(accesskit_winit::Adapter::with_direct_handlers(
+                event_loop,
+                window.as_ref(),
+                InitialTree(Arc::clone(&self.core.a11y_initial)),
+                QueueActions {
+                    queue: Arc::clone(&self.core.a11y_actions),
+                    wake: event_loop.create_proxy(),
+                },
+                NoopDeactivate,
+            ));
             self.window = Some(window);
         }
 
@@ -1008,12 +1154,18 @@ impl Runner {
         self.surface = Some(surface);
         self.orchestrator = Some(orchestrator);
         self.core.needs_layout = true;
+        window.set_visible(true);
         window.request_redraw();
         Ok(())
     }
 }
 
 impl ApplicationHandler for Runner {
+    fn proxy_wake_up(&mut self, _event_loop: &dyn ActiveEventLoop) {
+        // An AT action was queued while the loop may be idle under `Wait`.
+        self.request_redraw();
+    }
+
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
         if let Err(err) = self.create_surfaces(event_loop) {
             tracing::error!("martensite runner: {err}");
@@ -1033,6 +1185,10 @@ impl ApplicationHandler for Runner {
     }
 
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        // AT sees every event first (focus tracking, event filtering).
+        if let (Some(adapter), Some(window)) = (self.a11y_platform.as_mut(), self.window.as_ref()) {
+            adapter.process_event(window.as_ref(), &event);
+        }
         if let WindowEvent::RedrawRequested = event {
             let now = Instant::now();
             let dt = now.saturating_duration_since(self.last_frame);
@@ -1048,23 +1204,63 @@ impl ApplicationHandler for Runner {
             return;
         }
         let scale = self.scale();
+        // Pointer/drop positions arrive in raw surface pixels, while the
+        // arena is laid out at the clamped extent (`clamped_extent` can
+        // shrink below `surface_size` on downlevel adapters). The ratio
+        // maps raw → layout coordinates per axis; identity when there is
+        // no window yet or no clamp is in effect.
+        let layout_scale = match &self.window {
+            Some(window) => {
+                let size = window.surface_size();
+                let (cw, ch) = self.clamped_extent(size.width.max(1), size.height.max(1));
+                martensite_window::surface_to_layout_scale((size.width, size.height), (cw, ch))
+            }
+            None => (1.0, 1.0),
+        };
         let fx = self
             .core
-            .handle_event(&event, id, scale, &WinitDrop(event_loop));
+            .handle_event(&event, id, scale, layout_scale, &WinitDrop(event_loop));
         self.apply(event_loop, fx);
     }
 }
 
 /// Converts a pointer event at unit scale: arena bounds are laid out in
 /// physical pixels, so winit's physical positions are used unchanged.
+/// When the surface extent is clamped below the raw window extent,
+/// [`RunnerCore::handle_event`] rescales the returned position by the
+/// ratio from [`martensite_window::surface_to_layout_scale`] before
+/// dispatch — this helper only performs the winit → [`PointerEvent`]
+/// conversion.
 fn pointer_event(event: &WindowEvent) -> Option<PointerEvent> {
     convert_window_event(event, &DpiScale::new(1.0))
 }
 
 /// Converts a drag event at unit scale for the same reason as
-/// [`pointer_event`].
+/// [`pointer_event`]; the clamp ratio is applied afterwards by
+/// [`scale_drop_position`] inside [`RunnerCore::handle_event`].
 fn drop_event(event: &WindowEvent) -> Option<DropEvent> {
     convert_drop_event(event, &DpiScale::new(1.0))
+}
+
+/// Scales a converted [`DropEvent`]'s position by `ratio`, mapping raw
+/// surface pixels into the — possibly clamped — layout extent.
+/// [`DropEvent::Dropped`] and [`DropEvent::Left`] carry no position and
+/// pass through; a unit `ratio` leaves coordinates untouched.
+fn scale_drop_position(event: &mut DropEvent, (sx, sy): (f32, f32)) {
+    match event {
+        DropEvent::Moved { position, .. } => {
+            position.x *= sx;
+            position.y *= sy;
+        }
+        DropEvent::Entered {
+            position: Some(position),
+            ..
+        } => {
+            position.x *= sx;
+            position.y *= sy;
+        }
+        _ => {}
+    }
 }
 
 /// Whether a payload read failure is transient: winit reports
@@ -1188,6 +1384,7 @@ pub fn run(
         surface: None,
         orchestrator: None,
         recovery: RecoveryMachine::new(),
+        a11y_platform: None,
         launch_error: Arc::clone(&launch_error),
         last_frame: Instant::now(),
     };
@@ -1204,7 +1401,7 @@ pub fn run(
 mod tests {
     use super::*;
     use martensite_core::{DummyWidget, EventResponse, HotNode, NodeFlags, Rect};
-    use martensite_core::{EventContext, Widget, WidgetEvent};
+    use martensite_core::{EventContext, PaintContext, Widget, WidgetEvent};
     use std::cell::RefCell;
     use std::sync::Weak;
     use winit::data_transfer::TransferType;
@@ -1489,6 +1686,10 @@ mod tests {
             self.log
                 .push(format!("layout {}x{}", bounds.width(), bounds.height()));
         }
+        fn paint(&self, cx: &mut PaintContext) {
+            cx.list
+                .push_fill_rect(kurbo::Rect::new(0.0, 0.0, 10.0, 10.0), [255, 0, 0, 255]);
+        }
         fn event(&mut self, cx: &mut EventContext) -> EventResponse {
             match cx.event {
                 WidgetEvent::Scroll { delta, .. } => {
@@ -1501,10 +1702,16 @@ mod tests {
     }
 
     fn probe_root(log: &Log) -> RootFactory {
+        probe_root_in(log, Rect::new(300.0, 300.0, 100.0, 100.0))
+    }
+
+    /// Probe root laid out at explicit `bounds` — used to model a widget
+    /// mounted in clamped layout coordinates.
+    fn probe_root_in(log: &Log, bounds: Rect) -> RootFactory {
         let log = log.clone();
         Box::new(move |arena: &mut WidgetArena, _scale: f32| {
             let hot = HotNode {
-                bounds: Rect::new(300.0, 300.0, 100.0, 100.0),
+                bounds,
                 flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED,
                 ..HotNode::default()
             };
@@ -1642,9 +1849,97 @@ mod tests {
     fn pointer_press_reaches_widget_under_physical_position() {
         let log = Log::default();
         let mut core = ready_core(&log);
-        let fx = core.handle_event(&pressed_at(350.0, 350.0), win(), 2.0, &FakeDrop::default());
+        let fx = core.handle_event(
+            &pressed_at(350.0, 350.0),
+            win(),
+            2.0,
+            (1.0, 1.0),
+            &FakeDrop::default(),
+        );
         assert!(fx.redraw);
         assert!(log.has("PointerPressed"));
+    }
+
+    #[test]
+    fn pointer_position_scales_into_clamped_layout_space() {
+        // A 2:1 clamp halves the layout extent: a raw 350 px press must
+        // land at 175 in layout space to hit a widget laid out there.
+        let log = Log::default();
+        let mut core = RunnerCore::new(
+            Some(probe_root_in(&log, Rect::new(160.0, 160.0, 40.0, 40.0))),
+            Vec::new(),
+            true,
+        );
+        core.init_arena(1.0).expect("arena initializes");
+        let platform = FakeDrop::default();
+
+        // Identity ratio leaves the raw position: the press misses.
+        core.handle_event(&pressed_at(350.0, 350.0), win(), 1.0, (1.0, 1.0), &platform);
+        assert!(!log.has("PointerPressed"));
+
+        let fx = core.handle_event(&pressed_at(350.0, 350.0), win(), 1.0, (0.5, 0.5), &platform);
+        assert!(fx.redraw);
+        assert!(log.has("PointerPressed"));
+    }
+
+    #[test]
+    fn drag_position_scales_into_clamped_layout_space() {
+        // Same clamp regime through the drop path: a raw 350 px drag
+        // hovers the widget at clamped 160..200 only when scaled.
+        let log = Log::default();
+        let mut core = RunnerCore::new(
+            Some(probe_root_in(&log, Rect::new(160.0, 160.0, 40.0, 40.0))),
+            Vec::new(),
+            true,
+        );
+        core.init_arena(1.0).expect("arena initializes");
+        let platform = FakeDrop::default();
+
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
+        assert!(!log.has("DropHover"));
+
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (0.5, 0.5),
+            &platform,
+        );
+        assert!(log.has("DropHover"));
+    }
+
+    #[test]
+    fn scale_drop_position_rescales_positioned_variants_only() {
+        let mut moved = DropEvent::Moved {
+            position: Vec2::new(350.0, 350.0),
+            action: martensite_window::event::DropAction::None,
+        };
+        scale_drop_position(&mut moved, (0.5, 0.5));
+        assert_eq!(moved.position(), Some(Vec2::new(175.0, 175.0)));
+
+        let mut entered_some = DropEvent::Entered {
+            position: Some(Vec2::new(350.0, 350.0)),
+            action: martensite_window::event::DropAction::None,
+        };
+        scale_drop_position(&mut entered_some, (0.5, 0.5));
+        assert_eq!(entered_some.position(), Some(Vec2::new(175.0, 175.0)));
+
+        let mut entered_none = DropEvent::Entered {
+            position: None,
+            action: martensite_window::event::DropAction::None,
+        };
+        scale_drop_position(&mut entered_none, (0.5, 0.5));
+        assert_eq!(entered_none.position(), None);
+
+        let mut left = DropEvent::Left;
+        scale_drop_position(&mut left, (0.5, 0.5));
+        assert_eq!(left.position(), None);
     }
 
     #[test]
@@ -1652,11 +1947,18 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
-        core.handle_event(&pointer_moved_at(350.0, 350.0), win(), 2.0, &platform);
+        core.handle_event(
+            &pointer_moved_at(350.0, 350.0),
+            win(),
+            2.0,
+            (1.0, 1.0),
+            &platform,
+        );
         let fx = core.handle_event(
             &wheel(MouseScrollDelta::LineDelta(0.0, 1.0)),
             win(),
             2.0,
+            (1.0, 1.0),
             &platform,
         );
         assert!(fx.redraw);
@@ -1667,6 +1969,7 @@ mod tests {
             ))),
             win(),
             2.0,
+            (1.0, 1.0),
             &platform,
         );
         assert!(log.has("scroll 3 -4"));
@@ -1681,6 +1984,7 @@ mod tests {
             &key(Some("a"), ElementState::Pressed, false),
             win(),
             1.0,
+            (1.0, 1.0),
             &platform,
         );
         assert!(fx.redraw);
@@ -1691,6 +1995,7 @@ mod tests {
             &key(Some("a"), ElementState::Pressed, true),
             win(),
             1.0,
+            (1.0, 1.0),
             &platform,
         );
         assert!(!log.entries()[before..]
@@ -1703,7 +2008,7 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let ime = WindowEvent::Ime(winit::event::Ime::Commit("é".into()));
-        let fx = core.handle_event(&ime, win(), 1.0, &FakeDrop::default());
+        let fx = core.handle_event(&ime, win(), 1.0, (1.0, 1.0), &FakeDrop::default());
         assert!(fx.redraw);
         assert!(log.has("ImeCommitted"));
     }
@@ -1713,7 +2018,7 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let event = WindowEvent::ModifiersChanged(Modifiers::from(ModifiersState::SHIFT));
-        let fx = core.handle_event(&event, win(), 1.0, &FakeDrop::default());
+        let fx = core.handle_event(&event, win(), 1.0, (1.0, 1.0), &FakeDrop::default());
         assert_eq!(fx, Effects::default());
         assert_eq!(core.mods, ModifiersState::SHIFT);
     }
@@ -1726,6 +2031,7 @@ mod tests {
             &WindowEvent::CloseRequested,
             win(),
             1.0,
+            (1.0, 1.0),
             &FakeDrop::default(),
         );
         assert_eq!(
@@ -1747,6 +2053,7 @@ mod tests {
             &WindowEvent::SurfaceResized(PhysicalSize::new(800, 600)),
             win(),
             1.0,
+            (1.0, 1.0),
             &platform,
         );
         assert_eq!(
@@ -1763,6 +2070,7 @@ mod tests {
             &WindowEvent::SurfaceResized(PhysicalSize::new(0, 600)),
             win(),
             1.0,
+            (1.0, 1.0),
             &platform,
         );
         assert_eq!(zero, Effects::default());
@@ -1778,7 +2086,7 @@ mod tests {
             scale_factor: 2.0,
             surface_size_writer: SurfaceSizeWriter::new(Weak::new()),
         };
-        let fx = core.handle_event(&event, win(), 1.0, &FakeDrop::default());
+        let fx = core.handle_event(&event, win(), 1.0, (1.0, 1.0), &FakeDrop::default());
         assert!(fx.redraw);
         assert!(core.needs_layout);
         assert_eq!(core.arena.as_ref().expect("arena").scale_factor(), 2.0);
@@ -1798,7 +2106,7 @@ mod tests {
             },
         ];
         for event in &events {
-            let fx = core.handle_event(event, win(), 1.0, &FakeDrop::default());
+            let fx = core.handle_event(event, win(), 1.0, (1.0, 1.0), &FakeDrop::default());
             assert_eq!(
                 fx,
                 Effects {
@@ -1814,9 +2122,9 @@ mod tests {
         let log = Log::default();
         let mut core = core_with(&log, false);
         let platform = FakeDrop::default();
-        let fx = core.handle_event(&drag_entered(1), win(), 1.0, &platform);
+        let fx = core.handle_event(&drag_entered(1), win(), 1.0, (1.0, 1.0), &platform);
         assert_eq!(fx, Effects::default());
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         assert!(platform.accepts.borrow().is_empty());
         assert!(platform.fetches.borrow().is_empty());
     }
@@ -1826,11 +2134,29 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
-        core.handle_event(&drag_entered(1), win(), 1.0, &platform);
-        core.handle_event(&drag_position(1, 350.0, 350.0), win(), 1.0, &platform);
-        core.handle_event(&drag_position(2, 350.0, 350.0), win(), 1.0, &platform);
-        core.handle_event(&drag_left(2), win(), 1.0, &platform);
-        core.handle_event(&drag_position(2, 350.0, 350.0), win(), 1.0, &platform);
+        core.handle_event(&drag_entered(1), win(), 1.0, (1.0, 1.0), &platform);
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
+        core.handle_event(
+            &drag_position(2, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
+        core.handle_event(&drag_left(2), win(), 1.0, (1.0, 1.0), &platform);
+        core.handle_event(
+            &drag_position(2, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
         assert_eq!(*platform.accepts.borrow(), vec![1, 2, 2]);
     }
 
@@ -1839,9 +2165,15 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
-        core.handle_event(&drag_position(1, 350.0, 350.0), win(), 1.0, &platform);
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
         assert!(log.has("DropHover"));
-        core.handle_event(&drag_left(1), win(), 1.0, &platform);
+        core.handle_event(&drag_left(1), win(), 1.0, (1.0, 1.0), &platform);
         assert!(log.has("DropHoverLeave"));
     }
 
@@ -1853,7 +2185,7 @@ mod tests {
             accept_fails: true,
             ..FakeDrop::default()
         };
-        core.handle_event(&drag_entered(1), win(), 1.0, &platform);
+        core.handle_event(&drag_entered(1), win(), 1.0, (1.0, 1.0), &platform);
         assert_eq!(*platform.accepts.borrow(), vec![1]);
         assert_eq!(core.accepted_transfer, Some(DataTransferId::from_raw(1)));
     }
@@ -1871,7 +2203,7 @@ mod tests {
             rejected: vec![Offer::Hint(TypeHint::UriList)],
             ..FakeDrop::default()
         };
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         assert_eq!(
             *platform.fetches.borrow(),
             vec![
@@ -1890,7 +2222,7 @@ mod tests {
             offered: Some(vec![Offer::Opaque(0)]),
             ..FakeDrop::default()
         };
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         assert_eq!(*platform.fetches.borrow(), vec![Offer::Opaque(0)]);
     }
 
@@ -1902,7 +2234,7 @@ mod tests {
             offered: Some(vec![Offer::Hint(TypeHint::Html), Offer::Opaque(1)]),
             ..FakeDrop::default()
         };
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         assert_eq!(
             *platform.fetches.borrow(),
             vec![Offer::Hint(TypeHint::Html)]
@@ -1920,8 +2252,14 @@ mod tests {
             ],
             ..FakeDrop::default()
         };
-        core.handle_event(&drag_position(1, 350.0, 350.0), win(), 1.0, &platform);
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         assert_eq!(
             *platform.fetches.borrow(),
             vec![
@@ -1939,7 +2277,7 @@ mod tests {
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
         for _ in 0..(MAX_PENDING_DROPS + 1) {
-            core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+            core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         }
         assert_eq!(core.pending_drops.len(), MAX_PENDING_DROPS);
     }
@@ -1953,6 +2291,7 @@ mod tests {
             &data_received(AsyncRequestSerial::get(), value),
             win(),
             1.0,
+            (1.0, 1.0),
             &FakeDrop::default(),
         );
         assert_eq!(fx, Effects::default());
@@ -1964,13 +2303,19 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         let serial = core.pending_drops[0];
         let value: Arc<dyn TypedData> = Arc::new(FakeData {
             pending: true,
             ..fake(TypeHint::Plaintext)
         });
-        let fx = core.handle_event(&data_received(serial, value), win(), 1.0, &platform);
+        let fx = core.handle_event(
+            &data_received(serial, value),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
         assert_eq!(fx, Effects::default());
         assert_eq!(core.pending_drops, vec![serial]);
         assert!(!log.has("Dropped"));
@@ -1981,13 +2326,25 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
-        core.handle_event(&drag_position(1, 350.0, 350.0), win(), 1.0, &platform);
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         let serial = core.pending_drops[0];
         let value: Arc<dyn TypedData> = Arc::new(fake(TypeHint::Image {
             extension_hint: None,
         }));
-        let fx = core.handle_event(&data_received(serial, value), win(), 1.0, &platform);
+        let fx = core.handle_event(
+            &data_received(serial, value),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
         assert!(fx.redraw);
         assert!(core.pending_drops.is_empty());
         assert!(log.has("DropHoverLeave"));
@@ -1998,14 +2355,26 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let platform = FakeDrop::default();
-        core.handle_event(&drag_position(1, 350.0, 350.0), win(), 1.0, &platform);
-        core.handle_event(&drag_dropped(1), win(), 1.0, &platform);
+        core.handle_event(
+            &drag_position(1, 350.0, 350.0),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
+        core.handle_event(&drag_dropped(1), win(), 1.0, (1.0, 1.0), &platform);
         let serial = core.pending_drops[0];
         let value: Arc<dyn TypedData> = Arc::new(FakeData {
             text: "hi".into(),
             ..fake(TypeHint::Plaintext)
         });
-        let fx = core.handle_event(&data_received(serial, value), win(), 1.0, &platform);
+        let fx = core.handle_event(
+            &data_received(serial, value),
+            win(),
+            1.0,
+            (1.0, 1.0),
+            &platform,
+        );
         assert!(fx.redraw);
         assert!(core.pending_drops.is_empty());
         assert!(log.has("Dropped"));
@@ -2046,6 +2415,11 @@ mod tests {
             .filter(|e| e.starts_with("drain"))
             .collect();
         assert_eq!(drained, vec!["drain 1", "drain 2"]);
+        let paint = core.prepare_frame(Duration::ZERO).expect("arena mounted");
+        assert!(paint
+            .commands
+            .iter()
+            .any(|c| matches!(c, martensite_core::paint::PaintCommand::FillRect(..))));
     }
 
     #[test]
@@ -2095,9 +2469,11 @@ mod tests {
     }
 
     #[test]
-    fn only_poll_requests_continuous_redraw() {
-        assert!(wants_continuous_redraw(ControlFlow::Poll));
-        assert!(!wants_continuous_redraw(ControlFlow::Wait));
+    fn continuous_redraw_follows_control_flow() {
+        let mut cfg = RunnerConfig::new("t");
+        assert!(wants_continuous_redraw(cfg.control_flow));
+        cfg.control_flow = ControlFlow::Wait;
+        assert!(!wants_continuous_redraw(cfg.control_flow));
     }
 
     #[test]
@@ -2117,7 +2493,19 @@ mod tests {
         assert!(!cfg.decorations);
         assert!(cfg.icon.is_none());
         assert_eq!(cfg.drains.len(), 1);
-        let _ = cfg.window_attributes();
+        let attrs = cfg.window_attributes();
+        assert_eq!(attrs.title, "t");
+        assert!(matches!(
+            attrs.surface_size,
+            Some(winit::dpi::Size::Logical(s)) if s.width == 800.0 && s.height == 600.0
+        ));
+        assert!(matches!(
+            attrs.min_surface_size,
+            Some(winit::dpi::Size::Logical(s)) if s.width == 320.0 && s.height == 240.0
+        ));
+        assert!(!attrs.resizable);
+        assert!(!attrs.decorations);
+        assert!(!attrs.visible);
         assert!(format!("{cfg:?}").contains("accept_drops"));
     }
 
@@ -2128,6 +2516,7 @@ mod tests {
             &key(Some("a"), ElementState::Pressed, false),
             win(),
             1.0,
+            (1.0, 1.0),
             &FakeDrop::default(),
         );
         assert_eq!(
@@ -2149,7 +2538,7 @@ mod tests {
             ElementState::Pressed,
             false,
         );
-        let fx = core.handle_event(&event, win(), 1.0, &FakeDrop::default());
+        let fx = core.handle_event(&event, win(), 1.0, (1.0, 1.0), &FakeDrop::default());
         assert_eq!(
             fx,
             Effects {
@@ -2168,6 +2557,7 @@ mod tests {
             &key(None, ElementState::Pressed, false),
             win(),
             1.0,
+            (1.0, 1.0),
             &FakeDrop::default(),
         );
         assert!(log.has("KeyPressed"));
@@ -2179,7 +2569,8 @@ mod tests {
         let log = Log::default();
         let mut core = ready_core(&log);
         let event = WindowEvent::Ime(winit::event::Ime::Enabled);
-        let fx = core.handle_event(&event, win(), 1.0, &FakeDrop::default());
+        let before = log.entries().len();
+        let fx = core.handle_event(&event, win(), 1.0, (1.0, 1.0), &FakeDrop::default());
         assert_eq!(
             fx,
             Effects {
@@ -2187,43 +2578,44 @@ mod tests {
                 ..Effects::default()
             }
         );
-        assert!(!log.has("Ime"));
+        assert_eq!(log.entries().len(), before);
     }
 
     #[test]
-    fn redraw_requests_are_left_to_the_shell() {
+    fn layout_before_arena_is_a_noop_and_lays_out_after_init() {
         let log = Log::default();
-        let mut core = ready_core(&log);
-        let fx = core.handle_event(
-            &WindowEvent::RedrawRequested,
-            win(),
-            1.0,
-            &FakeDrop::default(),
-        );
-        assert_eq!(fx, Effects::default());
-    }
-
-    #[test]
-    fn layout_without_arena_only_clears_the_flag() {
-        let mut core = RunnerCore::new(None, Vec::new(), true);
+        let mut core = RunnerCore::new(Some(probe_root(&log)), Vec::new(), true);
         core.layout(10, 10);
         assert!(!core.needs_layout);
+        assert!(!log.has("layout"));
+        core.init_arena(1.0).expect("arena initializes");
+        core.layout(800, 600);
+        assert!(log.has("layout 800x600"));
     }
 
     #[test]
-    fn focus_request_from_widget_is_applied_on_next_frame() {
+    fn focus_request_moves_focus_to_a_focusable_widget_on_the_next_event() {
         let log = Log::default();
         let mut core = ready_core(&log);
-        let root = core.root.expect("root mounted");
-        core.arena.as_mut().expect("arena").request_focus(root);
+        let child = core.arena.as_mut().expect("arena").insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            Box::new(Probe { log: log.clone() }),
+        );
+        core.arena.as_mut().expect("arena").request_focus(child);
         core.handle_event(
             &pointer_moved_at(350.0, 350.0),
             win(),
             1.0,
+            (1.0, 1.0),
             &FakeDrop::default(),
         );
         assert!(core.prepare_frame(Duration::ZERO).is_some());
-        assert_eq!(core.focus.current_focus(), Some(root));
+        assert_eq!(core.focus.current_focus(), Some(child));
+        assert!(log.has("FocusGained"));
+        assert!(log.has("FocusLost"));
     }
 
     #[test]
@@ -2299,16 +2691,24 @@ mod tests {
     }
 
     #[test]
-    fn windowless_shell_helpers_fall_back_to_unit_scale() {
+    fn windowless_frame_runs_drains_and_repaints_without_a_gpu() {
         let log = Log::default();
+        let drain_log = log.clone();
+        let drains: Vec<AppDrain> =
+            vec![Box::new(move |_arena: &mut WidgetArena, _root: WidgetId| {
+                drain_log.push("drain");
+            }) as AppDrain];
+        let mut core = RunnerCore::new(Some(probe_root(&log)), drains, true);
+        core.init_arena(1.0).expect("arena initializes");
         let mut runner = Runner {
             config: RunnerConfig::new("t"),
-            core: ready_core(&log),
+            core,
             window: None,
             gpu: None,
             surface: None,
             orchestrator: None,
             recovery: RecoveryMachine::new(),
+            a11y_platform: None,
             launch_error: Arc::new(std::sync::Mutex::new(None)),
             last_frame: Instant::now(),
         };
@@ -2316,6 +2716,114 @@ mod tests {
         assert_eq!(runner.clamped_extent(800, 600), (800, 600));
         runner.request_redraw();
         runner.frame(Duration::ZERO);
+        assert!(log.has("drain"));
+        assert!(!runner.core.paint_list.commands.is_empty());
         assert!(runner.recovery.is_active());
+    }
+
+    #[test]
+    fn init_a11y_stages_initial_tree_containing_root() {
+        let log = Log::default();
+        let mut core = ready_core(&log);
+        core.init_a11y();
+        let root = core.root.expect("root mounted");
+        let update = core
+            .a11y_initial
+            .lock()
+            .expect("initial slot lock")
+            .take()
+            .expect("initial tree staged");
+        let root_node = martensite_access::widget_id_to_node_id(root);
+        assert!(update.nodes.iter().any(|(id, _)| *id == root_node));
+        assert!(core.a11y_tree.is_some());
+    }
+
+    #[test]
+    fn queued_actions_are_decoded_and_dispatched_with_a_forced_update() {
+        let log = Log::default();
+        let mut core = ready_core(&log);
+        core.init_a11y();
+        let root = core.root.expect("root mounted");
+        // A FOCUSABLE probe child distinct from the root, so dispatch
+        // to a non-root arena target is exercised.
+        let child = core.arena.as_mut().expect("arena").insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            Box::new(Probe { log: log.clone() }),
+        );
+        let tree_id = core.a11y_tree.as_ref().expect("tree").tree_id();
+        let t0 = Instant::now();
+        assert!(core.pump_a11y_at(t0).is_some());
+        {
+            let mut queue = core.a11y_actions.lock().expect("queue lock");
+            queue.push(accesskit::ActionRequest {
+                action: accesskit::Action::Focus,
+                target_node: martensite_access::widget_id_to_node_id(child),
+                target_tree: tree_id,
+                data: None,
+            });
+            queue.push(accesskit::ActionRequest {
+                action: accesskit::Action::Click,
+                target_node: martensite_access::widget_id_to_node_id(root),
+                target_tree: tree_id,
+                data: None,
+            });
+        }
+        // Inside the throttle window: only the dispatched actions force
+        // the emit.
+        assert!(core.pump_a11y_at(t0 + Duration::from_millis(10)).is_some());
+        assert!(log.has("SemanticAction(Focus)"));
+        assert!(log.has("SemanticAction(Click)"));
+        assert!(core.a11y_actions.lock().expect("queue lock").is_empty());
+        // An action naming another tree is dropped silently — and, as
+        // nothing decoded, the throttle still applies.
+        core.a11y_actions
+            .lock()
+            .expect("queue lock")
+            .push(accesskit::ActionRequest {
+                action: accesskit::Action::Click,
+                target_node: martensite_access::widget_id_to_node_id(root),
+                target_tree: accesskit::TreeId(accesskit::Uuid::from_u128(0xdead_beef)),
+                data: None,
+            });
+        assert!(core.pump_a11y_at(t0 + Duration::from_millis(20)).is_none());
+    }
+
+    #[test]
+    fn tree_updates_are_throttled_to_the_emit_interval() {
+        let log = Log::default();
+        let mut core = ready_core(&log);
+        core.init_a11y();
+        let t0 = Instant::now();
+        assert!(core.pump_a11y_at(t0).is_some());
+        assert!(core.pump_a11y_at(t0 + Duration::from_millis(10)).is_none());
+        assert!(core.pump_a11y_at(t0 + Duration::from_millis(100)).is_some());
+    }
+
+    #[test]
+    fn focus_change_forces_a_tree_update_inside_the_throttle_window() {
+        let log = Log::default();
+        let mut core = ready_core(&log);
+        core.init_a11y();
+        let t0 = Instant::now();
+        assert!(core.pump_a11y_at(t0).is_some());
+        let child = core.arena.as_mut().expect("arena").insert_with_widget(
+            HotNode {
+                flags: NodeFlags::VISIBLE | NodeFlags::FOCUSABLE,
+                ..HotNode::default()
+            },
+            Box::new(Probe { log: log.clone() }),
+        );
+        core.focus.set_focus_unchecked(child);
+        assert!(core.pump_a11y_at(t0 + Duration::from_millis(10)).is_some());
+    }
+
+    #[test]
+    fn pump_without_a_tree_is_a_noop() {
+        let log = Log::default();
+        let mut core = ready_core(&log);
+        assert!(core.pump_a11y_at(Instant::now()).is_none());
     }
 }

@@ -2983,6 +2983,7 @@ dependencies = [
  "glam",
  "kurbo",
  "martensite-access",
+ "martensite-accesskit-winit",
  "martensite-assets",
  "martensite-blessed",
  "martensite-clipboard",

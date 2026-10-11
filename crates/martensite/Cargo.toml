@@ -70,6 +70,9 @@ tiny-skia = { workspace = true }
 # martensite-host itself carries the dev_channel modules.
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 martensite-host = { workspace = true, optional = true }
+# Platform AccessKit adapter for the native runner (the web target mirrors
+# the tree through `martensite-access`'s `WebA11yBridge` instead).
+accesskit_winit = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 # Carries the `History` web-sys feature into the unified wasm feature
