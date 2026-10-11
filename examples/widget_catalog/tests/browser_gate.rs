@@ -49,8 +49,12 @@
 //! runner `configure` succeeds directly — the gate proves the
 //! raised-limit path end-to-end. The `clamp_extent` shrink path
 //! (needed on genuinely 2048-capped adapters like the Firefox
-//! deployment that reported this bug) is covered by unit tests; no
-//! headless adapter limited enough to exercise it is available.
+//! deployment that reported this bug) is exercised end-to-end by the
+//! second gate below: the catalog honors a test-only
+//! `?clamp_limit=<u32>` URL parameter that lowers the effective
+//! `max_texture_dimension_2d`, so even an adapter with a large limit
+//! clamps the surface — and the gate proves pointer hits and the
+//! a11y-mirror geometry stay aligned with the painted canvas.
 //!
 //! # Manual equivalent
 //!
@@ -63,24 +67,29 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The web gate: wasm-bindgen-built catalog + headless-browser check.
-///
-/// Skipped (not failed) unless `MARTENSITE_WEB_BROWSER` is set — the
-/// same skip-if-unset convention as the `examples/web` gate.
-#[test]
-#[ignore = "requires static wasm build + node/npm + python3 — set MARTENSITE_WEB_BROWSER=1"]
-fn web_headless_browser_gate() {
+/// `true` when the gate should run (`MARTENSITE_WEB_BROWSER` set);
+/// logs the skip reason otherwise.
+fn gate_enabled(name: &str) -> bool {
     if std::env::var_os("MARTENSITE_WEB_BROWSER").is_none() {
-        eprintln!("MARTENSITE_WEB_BROWSER not set; gate skipped");
-        return;
+        eprintln!("MARTENSITE_WEB_BROWSER not set; {name} skipped");
+        return false;
     }
+    true
+}
 
+/// `examples/widget_catalog/` and the workspace root.
+fn example_and_workspace() -> (PathBuf, PathBuf) {
     let example_dir = Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf();
     let workspace_dir = example_dir
         .parent()
         .and_then(|p| p.parent())
         .expect("examples/widget_catalog has a workspace grandparent")
         .to_path_buf();
+    (example_dir, workspace_dir)
+}
+
+/// Tool availability check shared by both gates.
+fn ensure_gate_tools() {
     for (tool, args) in [
         ("node", ["--version"].as_slice()),
         ("npm", ["--version"].as_slice()),
@@ -101,46 +110,57 @@ fn web_headless_browser_gate() {
              or unset MARTENSITE_WEB_BROWSER"
         );
     }
+}
 
-    // Build the wasm cdylib (--lib keeps the bin's artifact out of the
-    // filename collision), regenerate the JS glue, and statically
-    // serve examples/widget_catalog/web — the same flow the README's
-    // Option B documents.
-    let build = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "widget_catalog",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-            "--lib",
-        ])
-        .current_dir(&workspace_dir)
-        .status()
-        .expect("spawn cargo build");
-    assert!(
-        build.success(),
-        "web browser gate: wasm release build failed"
-    );
+/// Builds the wasm cdylib (--lib keeps the bin's artifact out of the
+/// filename collision) and regenerates the JS glue — the same flow the
+/// README's Option B documents. Runs once per test process; both gates
+/// share the artifact.
+fn ensure_wasm_bundle() {
+    static BUNDLE: std::sync::Once = std::sync::Once::new();
+    BUNDLE.call_once(|| {
+        let (example_dir, workspace_dir) = example_and_workspace();
+        let build = Command::new("cargo")
+            .args([
+                "build",
+                "-p",
+                "widget_catalog",
+                "--target",
+                "wasm32-unknown-unknown",
+                "--release",
+                "--lib",
+            ])
+            .current_dir(&workspace_dir)
+            .status()
+            .expect("spawn cargo build");
+        assert!(
+            build.success(),
+            "web browser gate: wasm release build failed"
+        );
 
-    let pkg_dir = example_dir.join("web").join("pkg");
-    std::fs::create_dir_all(&pkg_dir).expect("create web/pkg");
-    let glue = Command::new("wasm-bindgen")
-        .args([
-            "--target",
-            "web",
-            "--out-dir",
-            pkg_dir.to_str().expect("utf8 path"),
-            workspace_dir
-                .join("target/wasm32-unknown-unknown/release/widget_catalog.wasm")
-                .to_str()
-                .expect("utf8 path"),
-        ])
-        .status()
-        .expect("spawn wasm-bindgen");
-    assert!(glue.success(), "web browser gate: wasm-bindgen failed");
+        let pkg_dir = example_dir.join("web").join("pkg");
+        std::fs::create_dir_all(&pkg_dir).expect("create web/pkg");
+        let glue = Command::new("wasm-bindgen")
+            .args([
+                "--target",
+                "web",
+                "--out-dir",
+                pkg_dir.to_str().expect("utf8 path"),
+                workspace_dir
+                    .join("target/wasm32-unknown-unknown/release/widget_catalog.wasm")
+                    .to_str()
+                    .expect("utf8 path"),
+            ])
+            .status()
+            .expect("spawn wasm-bindgen");
+        assert!(glue.success(), "web browser gate: wasm-bindgen failed");
+    });
+}
 
+/// Serves `examples/widget_catalog/web` on an ephemeral port. The
+/// returned `(url, guard)` keeps the server alive until `guard` drops.
+fn serve_example_web() -> (String, ChildGuard) {
+    let (example_dir, _) = example_and_workspace();
     // Pick a free port, then release it for the static server.
     let port = TcpListener::bind("127.0.0.1:0")
         .expect("bind ephemeral port")
@@ -148,8 +168,7 @@ fn web_headless_browser_gate() {
         .expect("local addr")
         .port();
     let url = format!("http://127.0.0.1:{port}/index.html");
-
-    let mut server = Command::new("python3")
+    let server = Command::new("python3")
         .args([
             "-m",
             "http.server",
@@ -163,19 +182,24 @@ fn web_headless_browser_gate() {
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn python3 http.server");
-    let _server_guard = ChildGuard(&mut server);
-
+    let guard = ChildGuard(server);
     wait_for_port(port, Duration::from_secs(30))
         .unwrap_or_else(|| panic!("python3 http.server did not open port {port}"));
+    (url, guard)
+}
 
-    let temp = std::env::temp_dir().join(format!("martensite-web-gate-{}", std::process::id()));
+/// Installs playwright into a fresh temp dir, writes `script` next to
+/// it, and runs it against `url` — asserting on a clean exit.
+fn run_browser_script(script: &str, name: &str, url: &str) {
+    let temp =
+        std::env::temp_dir().join(format!("martensite-web-gate-{}-{name}", std::process::id()));
     std::fs::create_dir_all(&temp).expect("create gate temp dir");
     install_playwright(&temp);
-    let script = write_check_script(&temp);
+    let script_path = write_script(&temp, script);
 
     let output = Command::new("node")
-        .arg(&script)
-        .arg(&url)
+        .arg(&script_path)
+        .arg(url)
         .current_dir(&temp)
         .output()
         .expect("run playwright check");
@@ -184,15 +208,61 @@ fn web_headless_browser_gate() {
     let _ = std::fs::remove_dir_all(&temp);
     assert!(
         output.status.success(),
-        "web browser gate FAILED\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "{name} FAILED\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     eprintln!("{stdout}");
 }
 
-/// Kills the spawned server when the gate ends (pass or panic).
-struct ChildGuard<'a>(&'a mut Child);
+/// The web gate: wasm-bindgen-built catalog + headless-browser check.
+///
+/// Skipped (not failed) unless `MARTENSITE_WEB_BROWSER` is set — the
+/// same skip-if-unset convention as the `examples/web` gate.
+#[test]
+#[ignore = "requires static wasm build + node/npm + python3 — set MARTENSITE_WEB_BROWSER=1"]
+fn web_headless_browser_gate() {
+    if !gate_enabled("web_headless_browser_gate") {
+        return;
+    }
+    ensure_gate_tools();
+    ensure_wasm_bundle();
+    let (url, _server_guard) = serve_example_web();
+    run_browser_script(CHECK_SCRIPT, "web_headless_browser_gate", &url);
+}
 
-impl Drop for ChildGuard<'_> {
+/// The clamp gate: loads `?clamp_limit=1024` on the oversize canvas so
+/// the surface is forced through `clamp_extent` (2200×1300 layout box →
+/// a 1024×~605 backing store), then verifies the two coordinate
+/// contracts a clamp splits:
+///
+/// * **Pointer hits** — a screen click at the a11y-mirror position of a
+///   known interactive widget must flip its state (raw surface px →
+///   clamped layout px), and
+/// * **Mirror geometry** — that element's `getBoundingClientRect` must
+///   sit under the click point within tolerance (clamped layout px →
+///   CSS px).
+///
+/// Skipped unless `MARTENSITE_WEB_BROWSER` is set, same convention as
+/// the main gate.
+#[test]
+#[ignore = "requires static wasm build + node/npm + python3 — set MARTENSITE_WEB_BROWSER=1"]
+fn web_clamped_surface_pointer_gate() {
+    if !gate_enabled("web_clamped_surface_pointer_gate") {
+        return;
+    }
+    ensure_gate_tools();
+    ensure_wasm_bundle();
+    let (url, _server_guard) = serve_example_web();
+    run_browser_script(
+        CLAMP_CHECK_SCRIPT,
+        "web_clamped_surface_pointer_gate",
+        &format!("{url}?clamp_limit=1024"),
+    );
+}
+
+/// Kills the spawned server when the gate ends (pass or panic).
+struct ChildGuard(Child);
+
+impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
@@ -228,11 +298,19 @@ fn install_playwright(dir: &Path) {
     );
 }
 
-/// Writes the playwright check script into `dir` (next to its
+/// Writes the playwright check `script` into `dir` (next to its
 /// `node_modules`, so the bare `playwright` import resolves) and returns
 /// its path.
-fn write_check_script(dir: &Path) -> PathBuf {
-    const SCRIPT: &str = r#"import { chromium } from 'playwright';
+fn write_script(dir: &Path, script: &str) -> PathBuf {
+    let path = dir.join("browser_check.mjs");
+    let mut file = std::fs::File::create(&path).expect("create check script");
+    file.write_all(script.as_bytes())
+        .expect("write check script");
+    path
+}
+
+/// The main gate's playwright script (see `web_headless_browser_gate`).
+const CHECK_SCRIPT: &str = r#"import { chromium } from 'playwright';
 import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -480,9 +558,221 @@ if (failures.length) {
 }
 console.log('BROWSER GATE PASS');
 "#;
-    let path = dir.join("browser_check.mjs");
-    let mut file = std::fs::File::create(&path).expect("create check script");
-    file.write_all(SCRIPT.as_bytes())
-        .expect("write check script");
-    path
+
+/// The clamp gate's playwright script (see
+/// `web_clamped_surface_pointer_gate`). Loads `?clamp_limit=1024` so the
+/// catalog clamps the oversize canvas's backing store, then clicks the
+/// screen position of a mirror element for a known interactive widget
+/// and asserts both directions of the coordinate contract.
+const CLAMP_CHECK_SCRIPT: &str = r#"import { chromium } from 'playwright';
+import fs from 'node:fs';
+
+const url = process.argv[2];
+const logs = [];
+const candidates = [
+  process.env.CHROMIUM_PATH,
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
+].filter((p) => p && fs.existsSync(p));
+const browser = await chromium.launch({
+  headless: true,
+  args: [
+    '--no-sandbox',
+    '--use-angle=swiftshader',
+    '--enable-unsafe-swiftshader',
+  ],
+  ...(candidates.length ? { executablePath: candidates[0] } : {}),
+});
+var pageErrors = [];
+var result = null;
+try {
+  const page = await browser.newPage({ viewport: { width: 2400, height: 1500 } });
+  // Same oversize CSS layout box as the main gate — with
+  // `?clamp_limit=1024` this forces the surface through
+  // `clamp_extent`: ~2200×1300 surface px → 1024×~605 layout px.
+  await page.addInitScript(() => {
+    const inject = () => {
+      const style = document.createElement('style');
+      style.textContent =
+        '#martensite-canvas { width: 2200px !important; height: 1300px !important; ' +
+        'max-width: none !important; max-height: none !important; }';
+      (document.head || document.documentElement).appendChild(style);
+    };
+    if (document.documentElement) inject();
+    else document.addEventListener('DOMContentLoaded', inject, { once: true });
+  });
+  page.on('console', (m) => logs.push(m.text()));
+  page.on('pageerror', (e) => {
+    logs.push(`pageerror: ${e}`);
+    pageErrors.push(String(e));
+  });
+  await page.goto(url, { waitUntil: 'load' });
+  const mirror = await page.waitForSelector('[data-martensite-a11y-mirror]', {
+    state: 'attached',
+    timeout: 30000,
+  }).catch(() => null);
+  await page.waitForTimeout(1500);
+  if (mirror) {
+    await page.evaluate(async () => {
+      const mod = await import('./pkg/widget_catalog.js');
+      mod.martensite_catalog_enable_a11y();
+    });
+    await page.waitForSelector('[data-martensite-a11y-mirror] [role]', {
+      state: 'attached',
+      timeout: 10000,
+    }).catch(() => null);
+    // Let the first enabled tree's mirror styles settle.
+    await page.waitForTimeout(1000);
+    result = await page.evaluate(() => {
+      const canvas = document.getElementById('martensite-canvas');
+      const cRect = canvas.getBoundingClientRect();
+      // Pick an interactive mirror element inside the canvas's CSS
+      // box: a checkable control or a selected nav item.
+      const els = [...document.querySelectorAll('[data-martensite-a11y-mirror] [role]')];
+      const within = (r) =>
+        r.x >= cRect.x - 1 && r.y >= cRect.y - 1 &&
+        r.x + r.width <= cRect.x + cRect.width + 1 &&
+        r.y + r.height <= cRect.y + cRect.height + 1 &&
+        r.width >= 4 && r.height >= 4;
+      // A control whose mirrored state visibly flips on click, most
+      // deterministic first:
+      //  1. an unchecked radio/checkbox (`aria-checked` flips — e.g.
+      //     the theme radios in the toolbar);
+      //  2. an unselected nav item (`aria-selected` flips — the widget
+      //     rail);
+      //  3. any other toggling control.
+      // A *checked* radio is skipped — clicking one is a no-op.
+      const is = (e, ...roles) => roles.includes(e.getAttribute('role'));
+      const checkables = els.filter(
+        (e) =>
+          is(e, 'radio', 'checkbox', 'switch') &&
+          e.getAttribute('aria-checked') !== null &&
+          within(e.getBoundingClientRect()),
+      );
+      const selectable = els.filter(
+        (e) =>
+          is(e, 'listitem', 'option', 'treeitem', 'tab') &&
+          e.getAttribute('aria-selected') !== null &&
+          within(e.getBoundingClientRect()),
+      );
+      const target =
+        checkables.find(
+          (e) =>
+            is(e, 'radio', 'checkbox') &&
+            e.getAttribute('aria-checked') === 'false',
+        ) ||
+        selectable.find((e) => e.getAttribute('aria-selected') === 'false') ||
+        checkables.find((e) => e.getAttribute('aria-checked') === 'false') ||
+        selectable[0] ||
+        checkables[0];
+      if (!target) {
+        return { found: false };
+      }
+      const r = target.getBoundingClientRect();
+      return {
+        found: true,
+        id: target.id,
+        role: target.getAttribute('role'),
+        checked: target.getAttribute('aria-checked'),
+        selected: target.getAttribute('aria-selected'),
+        x: r.x,
+        y: r.y,
+        w: r.width,
+        h: r.height,
+      };
+    });
+  }
+  if (result && result.found) {
+    const cx = result.x + result.w / 2;
+    const cy = result.y + result.h / 2;
+    await page.mouse.click(cx, cy);
+    await page.waitForTimeout(600);
+    result.after = await page.evaluate((id) => {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return {
+        checked: el.getAttribute('aria-checked'),
+        selected: el.getAttribute('aria-selected'),
+        x: r.x,
+        y: r.y,
+        w: r.width,
+        h: r.height,
+      };
+    }, result.id);
+  }
+} finally {
+  await browser.close();
 }
+
+const joined = logs.join('\n');
+const failures = [];
+if (!joined.includes('martensite widget catalog starting')) {
+  failures.push('missing wasm start log');
+}
+if (!result) {
+  failures.push('a11y mirror never materialized');
+} else if (!result.found) {
+  failures.push('no interactive mirror element found inside the canvas');
+} else {
+  // The mirror element's rect must sit under the click point — the
+  // clamped-layout-px → CSS-px contract. Tolerance covers subpixel
+  // rounding and the borderless hit geometry, not a full clamp ratio.
+  const cx = result.x + result.w / 2;
+  const cy = result.y + result.h / 2;
+  const tol = 8;
+  if (
+    Math.abs(result.x - (cx - result.w / 2)) > 1 || // sanity
+    result.w <= 0 ||
+    result.h <= 0
+  ) {
+    failures.push(`mirror element has no rect: ${JSON.stringify(result)}`);
+  }
+  if (!result.after) {
+    failures.push('mirror element vanished after the click');
+  } else {
+    // The click landed on the element: its rect contains the click
+    // point (by construction) — the meaningful check is that it is
+    // *still* under the click point, i.e. the mirror stays aligned
+    // with the painted canvas, not just anywhere on screen.
+    const r2 = result.after;
+    const inside =
+      cx >= r2.x - tol &&
+      cx <= r2.x + r2.w + tol &&
+      cy >= r2.y - tol &&
+      cy <= r2.y + r2.h + tol;
+    if (!inside) {
+      failures.push(
+        `mirror element not under click point: click=(${cx.toFixed(1)},${cy.toFixed(1)}) ` +
+          `rect=${JSON.stringify(r2)} (tolerance ${tol}px)`,
+      );
+    }
+    // The state change proves the *pointer* path: the click mapped
+    // from raw surface px into clamped layout px and hit the widget.
+    const stateChanged =
+      (result.checked !== null && result.checked !== result.after.checked) ||
+      (result.selected !== null && result.selected !== result.after.selected);
+    if (!stateChanged) {
+      failures.push(
+        `click produced no state change on ${result.role} ${result.id}: ` +
+          `checked ${result.checked}→${result.after.checked} ` +
+          `selected ${result.selected}→${result.after.selected}`,
+      );
+    }
+  }
+}
+for (const marker of ['RefCell already borrowed']) {
+  if (joined.includes(marker)) {
+    failures.push(`console contains ${marker}`);
+  }
+}
+if (pageErrors.length) {
+  failures.push(`page errors: ${pageErrors.join(' | ')}`);
+}
+if (failures.length) {
+  console.error(`CLAMP GATE FAIL:\n - ${failures.join('\n - ')}\nconsole:\n${joined}`);
+  process.exit(1);
+}
+console.log('CLAMP GATE PASS');
+"#;
