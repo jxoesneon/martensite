@@ -479,6 +479,10 @@ impl DropBridge {
                 }
                 self.incoming = None;
                 self.current_target = None;
+                // A drag left/cancelled after an accepted `Dropped` must
+                // not leave the payload deliverable — `deliver_payload`
+                // would otherwise still hand it to the target's widget.
+                self.pending_drop = None;
                 if let Some((_, widget)) = self.hovered.take() {
                     sink.deliver(widget, &WidgetEvent::DropHoverLeave);
                 }
@@ -526,6 +530,14 @@ impl DropBridge {
     /// Recomputes the hovered target and delivers hover transitions to
     /// `sink`.
     fn update_hover(&mut self, sink: &mut dyn DropSink) -> DropOutcome {
+        // No position has been reported for the in-flight drag (e.g. an
+        // `Entered` that carries `position: None`): hit-testing against
+        // `last_position` would use its `Vec2::ZERO` default or the
+        // previous drag's endpoint, fabricating a hover — and an
+        // `accepted` outcome — for a target the drag never visited.
+        if !self.position_known {
+            return DropOutcome::default();
+        }
         let outcome = self.update_hover_state();
         let new_hovered = if outcome.accepted {
             outcome
@@ -1159,9 +1171,31 @@ mod tests {
     }
 
     #[test]
-    fn handle_with_drop_without_reported_position_has_none_position() {
+    fn handle_with_positionless_enter_fabricates_no_hover() {
         let mut bridge = registered_bridge();
-        // Bounds include the origin, which `last_position` defaults to.
+        // The target's bounds include the origin, which `last_position`
+        // defaults to: a positionless `Entered` must not be accepted by
+        // hit-testing that stale point.
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        let outcome = bridge.handle_with(
+            DropInput::Entered {
+                available_types: vec!["text/plain".into()],
+                position: None,
+                action: ProposedAction::Copy,
+            },
+            &mut sink,
+        );
+        assert!(!outcome.accepted);
+        assert_eq!(outcome.target, None);
+        assert!(bridge.current_target().is_none());
+        drop(sink);
+        assert!(log.is_empty(), "no hover may be fabricated: {log:?}");
+    }
+
+    #[test]
+    fn handle_with_moved_after_positionless_enter_delivers_hover() {
+        let mut bridge = registered_bridge();
         let mut log = Log::new();
         let mut sink = recorder(&mut log);
         bridge.handle_with(
@@ -1172,19 +1206,59 @@ mod tests {
             },
             &mut sink,
         );
-        bridge.handle_with(dropped(), &mut sink);
-        bridge.deliver_payload(DropPayload::Bytes(vec![1]), &mut sink);
+        // The first `Moved` reports the position, re-arming hover
+        // delivery for the rest of the drag.
+        let outcome = bridge.handle_with(moved(10.0, 10.0), &mut sink);
+        assert!(outcome.accepted);
+        assert!(bridge.current_target().is_some());
         drop(sink);
-        assert_eq!(
-            log.last(),
-            Some(&(
-                W1,
-                WidgetEvent::Dropped {
-                    position: None,
-                    payload: DropPayload::Bytes(vec![1]),
-                }
-            ))
+        assert_eq!(log, vec![(W1, hover(10.0, 10.0))]);
+    }
+
+    #[test]
+    fn handle_with_drop_without_reported_position_is_rejected() {
+        let mut bridge = registered_bridge();
+        // Bounds include the origin, which `last_position` defaults to:
+        // a drop that never reported a position lands on no target.
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(
+            DropInput::Entered {
+                available_types: vec!["text/plain".into()],
+                position: None,
+                action: ProposedAction::Copy,
+            },
+            &mut sink,
         );
+        let outcome = bridge.handle_with(dropped(), &mut sink);
+        assert!(!outcome.accepted);
+        assert!(bridge.pending_drop_target().is_none());
+        assert!(bridge
+            .deliver_payload(DropPayload::Bytes(vec![1]), &mut sink)
+            .is_none());
+        drop(sink);
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn handle_with_left_after_accepted_drop_clears_pending() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        let outcome = bridge.handle_with(dropped(), &mut sink);
+        assert!(outcome.accepted);
+        assert_eq!(bridge.pending_drop_target(), Some(W1));
+        // A `DragLeft` arriving after `DragDropped` cancels the pending
+        // payload rather than letting a later `deliver_payload` land a
+        // drop the user already cancelled.
+        bridge.handle_with(DropInput::Left, &mut sink);
+        assert!(bridge.pending_drop_target().is_none());
+        assert!(bridge
+            .deliver_payload(DropPayload::Text("x".into()), &mut sink)
+            .is_none());
+        drop(sink);
+        assert_eq!(log, vec![(W1, hover(10.0, 10.0))]);
     }
 
     #[test]

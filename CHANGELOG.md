@@ -58,9 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clamping; the mirror is now canvas-relative and scaled via
   `set_css_scale`.
 - **Browser gate coverage** — A new `web_clamped_surface_pointer_gate`
-  test loads the catalog with `?clamp_limit=1024` (test-only override)
-  on the oversize canvas and asserts a click reaches the widget under
-  it and that the a11y mirror rect contains the click point.
+  test loads the catalog with `?clamp_limit=1024` on the oversize
+  canvas and asserts a click reaches the widget under it and that the
+  a11y mirror rect contains the click point. The override is a
+  test-only hook compiled in by the catalog's `clamp-override-test`
+  cargo feature — off by default and not shipped in the deployed
+  bundle, so the URL parameter is inert there.
 
 ## [0.22.0] - 2026-10-10
 

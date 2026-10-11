@@ -85,7 +85,15 @@ pub(crate) const LOGICAL_HEIGHT: u32 = 860;
 /// `?clamp_limit=<u32>` query parameter, read once. Lets the browser
 /// gate exercise the surface-clamp path on adapters whose real
 /// `max_texture_dimension_2d` is far above the canvas extent.
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+///
+/// Compiled in only by the `clamp-override-test` feature — the deployed
+/// bundle builds without it, so the URL parameter is inert there and a
+/// visitor cannot degrade the demo.
+#[cfg(all(
+    target_arch = "wasm32",
+    target_os = "unknown",
+    feature = "clamp-override-test"
+))]
 fn clamp_limit_override() -> Option<u32> {
     static LIMIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
     *LIMIT.get_or_init(|| {
@@ -99,8 +107,19 @@ fn clamp_limit_override() -> Option<u32> {
     })
 }
 
-/// Native builds carry no clamp override.
-#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+/// Non-wasm builds carry no clamp override, even with the
+/// `clamp-override-test` feature enabled.
+#[cfg(all(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    feature = "clamp-override-test"
+))]
+fn clamp_limit_override() -> Option<u32> {
+    None
+}
+
+/// Without the `clamp-override-test` feature no target honors a clamp
+/// override — this is the deployed-bundle configuration.
+#[cfg(not(feature = "clamp-override-test"))]
 fn clamp_limit_override() -> Option<u32> {
     None
 }

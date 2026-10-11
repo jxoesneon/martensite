@@ -24,6 +24,12 @@ default = []
 # dev-session protocol (tree/lint/signals/events/a11y) to local tooling.
 # Off by default — public web builds carry none of the transport.
 web-dev = ["martensite-devtools/web-dev-channel"]
+# Browser-gate hook (tests/browser_gate.rs): compiles the wasm-only
+# `?clamp_limit=<u32>` URL override into the bundle so the gate can force
+# the surface through `clamp_extent` on any adapter. Off by default —
+# the deployed bundle ships without it, so a visitor cannot degrade the
+# demo by appending the parameter.
+clamp-override-test = []
 
 [dependencies]
 martensite = { workspace = true, features = [

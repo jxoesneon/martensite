@@ -50,11 +50,13 @@
 //! raised-limit path end-to-end. The `clamp_extent` shrink path
 //! (needed on genuinely 2048-capped adapters like the Firefox
 //! deployment that reported this bug) is exercised end-to-end by the
-//! second gate below: the catalog honors a test-only
-//! `?clamp_limit=<u32>` URL parameter that lowers the effective
-//! `max_texture_dimension_2d`, so even an adapter with a large limit
-//! clamps the surface — and the gate proves pointer hits and the
-//! a11y-mirror geometry stay aligned with the painted canvas.
+//! second gate below: when compiled with the `clamp-override-test`
+//! cargo feature (off by default — `ensure_wasm_bundle` enables it for
+//! the gate's build; the deployed bundle never ships it), the catalog
+//! honors a test-only `?clamp_limit=<u32>` URL parameter that lowers
+//! the effective `max_texture_dimension_2d`, so even an adapter with a
+//! large limit clamps the surface — and the gate proves pointer hits
+//! and the a11y-mirror geometry stay aligned with the painted canvas.
 //!
 //! # Manual equivalent
 //!
@@ -129,6 +131,11 @@ fn ensure_wasm_bundle() {
                 "wasm32-unknown-unknown",
                 "--release",
                 "--lib",
+                // The clamp gate drives `?clamp_limit=`; the override is
+                // compiled in only behind this test feature so the
+                // deployed bundle never ships it.
+                "--features",
+                "clamp-override-test",
             ])
             .current_dir(&workspace_dir)
             .status()
