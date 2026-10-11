@@ -372,17 +372,32 @@ During cursor motion, `DropTargetRegistry` tests the cursor coordinate against a
   - `DragLeave` $\rightarrow$ Target resets hover chrome to `DropTargetState::Idle`.
   - `Drop` $\rightarrow$ Target commits data and returns `DropOutcome`.
 
-### 6. Two Coexisting Delivery Models
-Drop handling currently has two models. They do not yet share one path:
+### 6. One Delivery API, Two Routing Strategies
+Widgets receive drops through one API: the `martensite_core::WidgetEvent` drop variants `DropHover { position }`, `DropHoverLeave`, and `Dropped { position, payload }`. A widget handles these in `Widget::event` the same way whichever strategy picks the target. Two strategies are available:
 
-| Model | Entry point | Who receives events | Use it when |
+| Strategy | Entry point | How the target is chosen | Use it when |
 |---|---|---|---|
-| **Registry negotiation** | `DropBridge` and `DropTargetRegistry` in `martensite-dnd` | Registered `DropTarget`s that negotiate types and `DropEffect`s | You need MIME-type negotiation, drag-source sessions, or cross-window coordination through the bridge |
-| **Widget hit-test** | `EventRouter::dispatch_drop_event` and `dispatch_drop_payload` in `martensite-window` | The widget under the pointer, as `WidgetEvent::DropHover`, `DropHoverLeave`, and `Dropped { payload }` | Your widget simply accepts files, URIs, or text dropped onto it, as the `runner` path does |
+| **Arena hit-test** | `EventRouter::dispatch_drop_event` and `dispatch_drop_payload` in `martensite-window` | The widget under the pointer, found by hit-testing the arena | Your widget simply accepts files, URIs, or text dropped onto it. The native `runner` uses this strategy |
+| **Registry negotiation** | `DropBridge::handle_with` and `DropBridge::deliver_payload` in `martensite-dnd`, with a `DropSink` | The registered `DropTarget` under the pointer whose MIME types and `DropEffectMask` accept the drag. Events go to that target's `widget_id` | You need MIME-type or `DropEffect` negotiation, or drag-source session tracking |
 
-The native `runner` delivers OS drags through the second model: it fetches the payload (URI list, then plain text, then the first advertised type) and dispatches it to the widget under the pointer. Use the widget model for ordinary drop zones. Use `DropBridge` only where you need the negotiation features above.
+The native `runner` fetches the payload (URI list, then plain text, then the first advertised type) and dispatches it to the widget under the pointer. Use arena hit-testing for ordinary drop zones.
 
-Convergence of the two models is planned before the API freeze. Until then, code written against one does not receive events from the other.
+With registry negotiation, `handle_with` delivers hover transitions as they happen. `DropHover` fires on enter and on every move over an accepting target. `DropHoverLeave` goes to the previous target when the drag moves to another target, moves off all targets, leaves the window, or is dropped and rejected. A target that rejects the drag's types or effects gets no hover events, so it never shows a drop affordance for a drop that would fail. An accepted `Dropped` input only records the target, because the payload arrives asynchronously. When the data transfer resolves, call `deliver_payload(payload, sink)` to send `WidgetEvent::Dropped`. `pending_drop_target()` reports which widget is waiting.
+
+`DropSink` decides how events reach widgets. A `WidgetArena` is a sink: it dispatches through `WidgetArena::dispatch_event`, which installs the ambient i18n context and bubbles unhandled events to ancestors. Any `FnMut(WidgetId, &WidgetEvent) -> EventResponse` closure is also a sink. `NoSink` delivers nothing.
+
+```rust
+// Negotiate with the registry, deliver into the arena.
+let outcome = bridge.handle_with(input, &mut arena);
+platform.set_accepted_actions(id, &outcome.accepted_actions())?;
+
+// Later, when the transfer data arrives:
+bridge.deliver_payload(DropPayload::Files(paths), &mut arena);
+```
+
+`DropBridge::handle` stays available. It behaves like `handle_with(input, &mut NoSink)`: it updates registry and session state and returns a `DropOutcome` without delivering events. The web backend (`WebDropListener`) drives its bridge through `handle` and reports `DropOutcome`s to its callback. Callers who also want widget delivery can reach the bridge through `WebDropListener::with_bridge`, for example to call `deliver_payload` with the captured drop data.
+
+Positions and registered bounds must use the same coordinate space (see Pitfall 3).
 
 ---
 
@@ -446,7 +461,7 @@ fn handle_drag_move(&mut self, physical_pos: (f64, f64), scale: f32) {
     let hit = self.logical_bounds.contains(logical_pos);
 }
 ```
-A hit test is only correct when the position and the bounds share one coordinate space. The native `runner` and the widget catalog lay the arena out at the surface's physical size, so `EventRouter` drop and pointer delivery takes winit's **physical** positions unchanged; dividing them by `DpiScale` on that path makes HiDPI drops miss. Only divide by the scale when the bounds you test against, such as a custom `DropTargetRegistry`, were registered in logical points.
+A hit test is only correct when the position and the bounds share one coordinate space. The native `runner` and the widget catalog lay the arena out at the surface's physical size, so `EventRouter` drop and pointer delivery takes winit's **physical** positions unchanged; dividing them by `DpiScale` on that path makes HiDPI drops miss. Only divide by the scale when the bounds you test against, such as a custom `DropTargetRegistry`, were registered in logical points. When a `DropBridge` delivers into such an arena through `handle_with`, register physical-pixel `DropTarget` bounds (the widgets' arena bounds) and pass a `scale_factor` of `1.0` to `convert_winit_drop_event`.
 
 ### 4. Forgetting `DropLeave` Cleanup on Window Blur or Esc
 When a user presses `Escape` or moves the mouse outside the window, the OS cancels the drag operation. If a drop target only resets its visual state on `Drop`, cancelled operations leave permanent hover borders or insertion indicators on the screen. Always ensure the `DropBridge` routes cancel events to `registry.clear_active_hovers()`.
