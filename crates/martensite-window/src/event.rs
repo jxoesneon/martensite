@@ -1633,21 +1633,64 @@ impl EventRouter {
                         arena.dispatch_event_ex(old, &WidgetEvent::DropHoverLeave);
                     }
                 }
-                let response = match target {
-                    Some(id) => arena
-                        .dispatch_event_ex(id, &WidgetEvent::DropHover { position: pos })
-                        .map(|(_, r)| r)
-                        .or(Some(EventResponse::Ignored)),
-                    None => None,
-                };
-                self.drain_focus(arena);
-                response
+                match target {
+                    Some(id) => {
+                        let delivered =
+                            arena.dispatch_event_ex(id, &WidgetEvent::DropHover { position: pos });
+                        self.drain_focus(arena);
+                        #[cfg(feature = "devtools")]
+                        if self.is_ledger_enabled() {
+                            self.record_dnd(
+                                arena,
+                                root,
+                                Some(id),
+                                dnd_disposition(id, delivered),
+                                Some(pos),
+                            );
+                        }
+                        delivered.map(|(_, r)| r).or(Some(EventResponse::Ignored))
+                    }
+                    None => {
+                        self.drain_focus(arena);
+                        #[cfg(feature = "devtools")]
+                        if self.is_ledger_enabled() {
+                            let (path, rejection) = diagnose_hit_rejection(arena, root, pos);
+                            let mut record = martensite_devtools::event_ledger::EventRecord::new(
+                                0,
+                                self.current_frame,
+                                martensite_devtools::event_ledger::EventKind::Dnd,
+                                martensite_devtools::event_ledger::Disposition::Ignored,
+                            )
+                            .with_position(pos)
+                            .with_hit_path(path)
+                            .with_focus(None, self.pending_focus);
+                            record = record.with_hit_rejection(rejection.unwrap_or(
+                                martensite_devtools::event_ledger::HitRejection::OutsideBounds,
+                            ));
+                            self.ledger.push(record);
+                        }
+                        None
+                    }
+                }
             }
             DropEvent::Dropped { .. } => {
                 // Record the drop even if no hover events preceded it —
                 // a positionless drop still completes through
                 // `dispatch_drop_payload`, which falls back to `root`.
-                self.drop.entry(window_id).or_default();
+                let state = self.drop.entry(window_id).or_default();
+                #[cfg(not(feature = "devtools"))]
+                let _ = state;
+                #[cfg(feature = "devtools")]
+                {
+                    let (target, position) = (state.target, state.position);
+                    if self.is_ledger_enabled() {
+                        let disp = match target {
+                            Some(id) => martensite_devtools::event_ledger::Disposition::Handled(id),
+                            None => martensite_devtools::event_ledger::Disposition::Ignored,
+                        };
+                        self.record_dnd(arena, root, target, disp, position);
+                    }
+                }
                 Some(EventResponse::Ignored)
             }
             DropEvent::Left => {
@@ -1655,7 +1698,27 @@ impl EventRouter {
                 if let Some(target) = state.target {
                     let response = arena.dispatch_event_ex(target, &WidgetEvent::DropHoverLeave);
                     self.drain_focus(arena);
+                    #[cfg(feature = "devtools")]
+                    if self.is_ledger_enabled() {
+                        self.record_dnd(
+                            arena,
+                            root,
+                            Some(target),
+                            dnd_disposition(target, response),
+                            state.position,
+                        );
+                    }
                     return response.map(|(_, r)| r).or(Some(EventResponse::Ignored));
+                }
+                #[cfg(feature = "devtools")]
+                if self.is_ledger_enabled() {
+                    self.record_dnd(
+                        arena,
+                        root,
+                        None,
+                        martensite_devtools::event_ledger::Disposition::Ignored,
+                        state.position,
+                    );
                 }
                 None
             }
@@ -1728,7 +1791,66 @@ impl EventRouter {
             },
         );
         self.drain_focus(arena);
+        #[cfg(feature = "devtools")]
+        if self.is_ledger_enabled() {
+            self.record_dnd(
+                arena,
+                root,
+                Some(target),
+                dnd_disposition(target, response),
+                state.position,
+            );
+        }
         response.map(|(_, r)| r).or(Some(EventResponse::Ignored))
+    }
+
+    /// Pushes an [`EventKind::Dnd`] record for a drag-and-drop step.
+    ///
+    /// `target` (when present) seeds the hit path from `root`; `position`
+    /// is the drag position if one is known for the step.
+    ///
+    /// [`EventKind::Dnd`]: martensite_devtools::event_ledger::EventKind::Dnd
+    #[cfg(feature = "devtools")]
+    fn record_dnd(
+        &mut self,
+        arena: &WidgetArena,
+        root: WidgetId,
+        target: Option<WidgetId>,
+        disposition: martensite_devtools::event_ledger::Disposition,
+        position: Option<Vec2>,
+    ) {
+        let path = target
+            .map(|id| build_hit_path(arena, Some(root), id))
+            .unwrap_or_default();
+        let mut record = martensite_devtools::event_ledger::EventRecord::new(
+            0,
+            self.current_frame,
+            martensite_devtools::event_ledger::EventKind::Dnd,
+            disposition,
+        )
+        .with_hit_path(path)
+        .with_focus(None, self.pending_focus);
+        if let Some(pos) = position {
+            record = record.with_position(pos);
+        }
+        self.ledger.push(record);
+    }
+}
+
+/// Maps a drag-and-drop delivery result to a ledger disposition, using the
+/// same rules as pointer delivery: the hit target itself responding is
+/// `Handled`, an ancestor responding after bubbling is `BubbledTo`, and an
+/// event that bubbled past the root unhandled is `Ignored`.
+#[cfg(feature = "devtools")]
+fn dnd_disposition(
+    target: WidgetId,
+    delivered: Option<(WidgetId, EventResponse)>,
+) -> martensite_devtools::event_ledger::Disposition {
+    use martensite_devtools::event_ledger::Disposition;
+    match delivered {
+        Some((responder, _)) if responder == target => Disposition::Handled(responder),
+        Some((responder, _)) => Disposition::BubbledTo(responder),
+        None => Disposition::Ignored,
     }
 }
 
@@ -2830,6 +2952,250 @@ mod tests {
                 martensite_core::DropPayload::Text("stray".into()),
             )
             .is_none());
+    }
+
+    /// Root (200×200, plain) with a drop-handling child at (50,50,50×50).
+    #[cfg(feature = "devtools")]
+    fn dnd_ledger_tree() -> (WidgetArena, WidgetId, WidgetId) {
+        let mut arena = WidgetArena::new();
+        let root = insert(&mut arena, 0.0, 0.0, 200.0, 200.0);
+        let child = arena.insert_with_widget(
+            hot_node(50.0, 50.0, 50.0, 50.0),
+            Box::new(DropLog {
+                log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            }),
+        );
+        arena.append_child(root, child).unwrap();
+        (arena, root, child)
+    }
+
+    #[cfg(feature = "devtools")]
+    fn drag_move(pos: Vec2) -> DropEvent {
+        DropEvent::Moved {
+            position: pos,
+            action: DropAction::Copy,
+        }
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_move_over_widget_records_handled_with_position_and_path() {
+        use martensite_devtools::event_ledger::{Disposition, EventKind, Point};
+        let (mut arena, root, child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(true);
+
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(60.0, 70.0)));
+
+        let ledger = router.event_ledger();
+        assert_eq!(ledger.len(), 1);
+        let rec = ledger.get(0).unwrap();
+        assert_eq!(rec.kind, EventKind::Dnd);
+        assert_eq!(rec.disposition, Disposition::Handled(child));
+        assert_eq!(rec.position, Some(Point::new(60.0, 70.0)));
+        assert_eq!(rec.hit_rejection, None);
+        let path: Vec<_> = rec.hit_path.iter().collect();
+        assert_eq!(path, vec![root, child]);
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_move_over_empty_space_records_ignored_outside_bounds() {
+        use martensite_devtools::event_ledger::{Disposition, EventKind, HitRejection, Point};
+        let (mut arena, root, _child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(true);
+
+        let r =
+            router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(500.0, 500.0)));
+        assert!(r.is_none());
+
+        let ledger = router.event_ledger();
+        assert_eq!(ledger.len(), 1);
+        let rec = ledger.get(0).unwrap();
+        assert_eq!(rec.kind, EventKind::Dnd);
+        assert_eq!(rec.disposition, Disposition::Ignored);
+        assert_eq!(rec.hit_rejection, Some(HitRejection::OutsideBounds));
+        assert_eq!(rec.position, Some(Point::new(500.0, 500.0)));
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_move_over_root_that_ignores_records_ignored() {
+        use martensite_devtools::event_ledger::{Disposition, EventKind};
+        let (mut arena, root, _child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(true);
+
+        // Inside the plain root but outside the child: the root is hit,
+        // ignores the hover, and the event bubbles past it unhandled.
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(10.0, 10.0)));
+
+        let rec = router.event_ledger().get(0).unwrap();
+        assert_eq!(rec.kind, EventKind::Dnd);
+        assert_eq!(rec.disposition, Disposition::Ignored);
+        assert_eq!(rec.hit_rejection, None);
+        assert_eq!(rec.hit_path.iter().collect::<Vec<_>>(), vec![root]);
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_drop_and_payload_record_target() {
+        use martensite_devtools::event_ledger::{Disposition, EventKind, Point};
+        let (mut arena, root, child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(true);
+
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(60.0, 60.0)));
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Dropped {
+                action: DropAction::Copy,
+            },
+        );
+        assert!(router
+            .dispatch_drop_payload(
+                &mut arena,
+                root,
+                win,
+                martensite_core::DropPayload::Text("x".into()),
+            )
+            .is_some());
+
+        let ledger = router.event_ledger();
+        assert_eq!(ledger.len(), 3);
+        for i in 0..3 {
+            let rec = ledger.get(i).unwrap();
+            assert_eq!(rec.kind, EventKind::Dnd);
+            assert_eq!(rec.disposition, Disposition::Handled(child));
+            assert_eq!(rec.position, Some(Point::new(60.0, 60.0)));
+        }
+        let payload = ledger.get(2).unwrap();
+        assert_eq!(
+            payload.hit_path.iter().collect::<Vec<_>>(),
+            vec![root, child]
+        );
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_positionless_drop_and_payload_fall_back_to_root() {
+        use martensite_devtools::event_ledger::{Disposition, EventKind};
+        let (mut arena, root, _child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(true);
+
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Dropped {
+                action: DropAction::None,
+            },
+        );
+        router.dispatch_drop_payload(
+            &mut arena,
+            root,
+            win,
+            martensite_core::DropPayload::Text("x".into()),
+        );
+
+        let ledger = router.event_ledger();
+        assert_eq!(ledger.len(), 2);
+        let dropped = ledger.get(0).unwrap();
+        assert_eq!(dropped.kind, EventKind::Dnd);
+        assert_eq!(dropped.disposition, Disposition::Ignored);
+        assert_eq!(dropped.position, None);
+        // The plain root receives the payload but does not handle it.
+        let payload = ledger.get(1).unwrap();
+        assert_eq!(payload.kind, EventKind::Dnd);
+        assert_eq!(payload.disposition, Disposition::Ignored);
+        assert_eq!(payload.hit_path.iter().collect::<Vec<_>>(), vec![root]);
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_left_records_target_and_last_position() {
+        use martensite_devtools::event_ledger::{Disposition, EventKind, Point};
+        let (mut arena, root, child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(true);
+
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(55.0, 65.0)));
+        router.dispatch_drop_event(&mut arena, root, win, &DropEvent::Left);
+
+        let ledger = router.event_ledger();
+        assert_eq!(ledger.len(), 2);
+        let left = ledger.get(1).unwrap();
+        assert_eq!(left.kind, EventKind::Dnd);
+        assert_eq!(left.disposition, Disposition::Handled(child));
+        assert_eq!(left.position, Some(Point::new(55.0, 65.0)));
+
+        // A leave after hovering only empty space records `Ignored`.
+        router.event_ledger_mut().clear();
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(900.0, 900.0)));
+        router.dispatch_drop_event(&mut arena, root, win, &DropEvent::Left);
+        let ledger = router.event_ledger();
+        assert_eq!(ledger.len(), 2);
+        let left = ledger.get(1).unwrap();
+        assert_eq!(left.disposition, Disposition::Ignored);
+        assert_eq!(left.position, Some(Point::new(900.0, 900.0)));
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_disposition_maps_bubbled_responder() {
+        use martensite_devtools::event_ledger::Disposition;
+        let a = WidgetId::from_parts(1, 1);
+        let b = WidgetId::from_parts(2, 1);
+        assert_eq!(
+            dnd_disposition(a, Some((a, EventResponse::Handled))),
+            Disposition::Handled(a)
+        );
+        assert_eq!(
+            dnd_disposition(a, Some((b, EventResponse::Handled))),
+            Disposition::BubbledTo(b)
+        );
+        assert_eq!(dnd_disposition(a, None), Disposition::Ignored);
+    }
+
+    #[cfg(feature = "devtools")]
+    #[test]
+    fn dnd_ledger_disabled_records_nothing() {
+        if martensite_devtools::event_ledger::is_debug_events_enabled() {
+            // `MARTENSITE_DEBUG_EVENTS` force-enables recording globally.
+            return;
+        }
+        let (mut arena, root, _child) = dnd_ledger_tree();
+        let win = WindowId::from_raw(1);
+        let mut router = EventRouter::new();
+        router.set_ledger_enabled(false);
+
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(60.0, 60.0)));
+        router.dispatch_drop_event(&mut arena, root, win, &drag_move(Vec2::new(500.0, 5.0)));
+        router.dispatch_drop_event(
+            &mut arena,
+            root,
+            win,
+            &DropEvent::Dropped {
+                action: DropAction::Copy,
+            },
+        );
+        router.dispatch_drop_payload(
+            &mut arena,
+            root,
+            win,
+            martensite_core::DropPayload::Text("x".into()),
+        );
+        assert_eq!(router.event_ledger().len(), 0);
     }
 
     #[test]
