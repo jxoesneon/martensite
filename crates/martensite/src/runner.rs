@@ -23,12 +23,25 @@
 //! .expect("app runs");
 //! ```
 //!
+//! # Limitations
+//!
+//! - No accessibility adapter is wired into the runner yet; the
+//!   widget-catalog path has one, so runner-hosted apps are not exposed
+//!   to assistive technology.
+//! - OS drag-and-drop is delivered through the arena's hit-test
+//!   ([`martensite_window::event::EventRouter::dispatch_drop_event`]) to
+//!   the widget under the pointer, not through the `martensite-dnd`
+//!   `DropBridge` registry.
+//!
 //! [`ApplicationHandler`]: winit::application::ApplicationHandler
 
+use std::io;
 use std::sync::Arc;
 
 use glam::Vec2;
-use martensite_core::{LayoutConstraints, LayoutContext, PaintList, Rect, WidgetArena, WidgetId};
+use martensite_core::{
+    DropPayload, LayoutConstraints, LayoutContext, PaintList, Rect, WidgetArena, WidgetId,
+};
 use martensite_dnd::DndPlatform;
 use martensite_focus::FocusManager;
 use martensite_wgpu::wgpu;
@@ -38,12 +51,12 @@ use martensite_wgpu::{
 };
 use martensite_window::event::{
     convert_drop_event, convert_modifiers_state, convert_window_event, ime_event_for_winit,
-    EventRouter,
+    DropEvent, EventRouter, PointerEvent,
 };
 use martensite_window::DpiScale;
 use web_time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::data_transfer::TypeHint;
+use winit::data_transfer::{DataTransferId, TransferType, TypeHint, TypedData};
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop};
@@ -349,6 +362,9 @@ struct Runner {
     /// Serials of in-flight `fetch_data_transfer` requests so a later
     /// `DataTransferReceived` can be correlated to this app.
     pending_drops: Vec<AsyncRequestSerial>,
+    /// Transfer whose accepted drop actions were last set, so
+    /// `DragPosition` does not re-register them on every move.
+    accepted_transfer: Option<DataTransferId>,
     /// Shared cell [`run`] reads after `run_app` consumes the handler,
     /// so a classified launch failure (window, GPU, or surface
     /// configuration) reaches the caller instead of looking like a
@@ -464,6 +480,61 @@ impl Runner {
             }
         }
         window.request_redraw();
+    }
+
+    /// Registers copy+move as accepted for `id` on `DragEntered` and
+    /// whenever the drag moves to a different transfer.
+    fn accept_transfer(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        id: DataTransferId,
+        entered: bool,
+    ) {
+        if !entered && self.accepted_transfer == Some(id) {
+            return;
+        }
+        self.accepted_transfer = Some(id);
+        let platform = martensite_dnd::platform::WinitDndPlatform::new(event_loop);
+        let _ = platform.set_accepted_actions(
+            martensite_dnd::PlatformTransferId::new(id.into_raw()),
+            &[
+                martensite_dnd::DropEffect::Copy,
+                martensite_dnd::DropEffect::Move,
+            ],
+        );
+    }
+
+    /// Starts the payload fetch for a dropped transfer, trying URIs,
+    /// then plain text, then the first remaining advertised type.
+    /// Returns `false` when the platform accepted no fetch.
+    fn fetch_drop_payload(&mut self, event_loop: &dyn ActiveEventLoop, id: DataTransferId) -> bool {
+        let transfer = event_loop.data_transfer(id).ok();
+        let offered = |hint: TypeHint| transfer.as_ref().is_none_or(|t| t.has_type(&hint));
+        let mut candidates: Vec<&dyn TransferType> = Vec::new();
+        if offered(TypeHint::UriList) {
+            candidates.push(&TypeHint::UriList);
+        }
+        if offered(TypeHint::Plaintext) {
+            candidates.push(&TypeHint::Plaintext);
+        }
+        if let Some(transfer) = &transfer {
+            candidates.extend(
+                transfer
+                    .available_types()
+                    .into_iter()
+                    .find(|ty| !matches!(ty.hint(), Some(TypeHint::UriList | TypeHint::Plaintext))),
+            );
+        }
+        for ty in candidates {
+            match event_loop.fetch_data_transfer(id, ty) {
+                Ok(serial) => {
+                    self.pending_drops.push(serial);
+                    return true;
+                }
+                Err(err) => tracing::debug!("martensite runner: fetch {ty:?} rejected: {err}"),
+            }
+        }
+        false
     }
 
     fn create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) -> Result<(), LaunchError> {
@@ -614,8 +685,7 @@ impl ApplicationHandler for Runner {
                 self.mods = m.state();
             }
             WindowEvent::PointerMoved { .. } | WindowEvent::PointerButton { .. } => {
-                let scale = DpiScale::new(self.scale() as f64);
-                if let Some(mut pe) = convert_window_event(&event, &scale) {
+                if let Some(mut pe) = pointer_event(&event) {
                     pe.modifiers = convert_modifiers_state(&self.mods);
                     if let (Some(arena), Some(root), Some(window)) =
                         (self.arena.as_mut(), self.root, self.window.as_ref())
@@ -683,36 +753,30 @@ impl ApplicationHandler for Runner {
                 if !self.config.accept_drops {
                     return;
                 }
-                // Accept copy+move so the OS shows a valid drop cursor;
-                // on `DragDropped` kick off the async payload fetch
-                // whose `DataTransferReceived` completes the delivery.
+                // Accept copy+move so the OS shows a valid drop cursor.
                 if let WindowEvent::DragEntered { id, .. }
                 | WindowEvent::DragPosition { id, .. }
                 | WindowEvent::DragDropped { id, .. } = &event
                 {
-                    let platform = martensite_dnd::platform::WinitDndPlatform::new(event_loop);
-                    let transfer_id = martensite_dnd::PlatformTransferId::new(id.into_raw());
-                    let _ = platform.set_accepted_actions(
-                        transfer_id,
-                        &[
-                            martensite_dnd::DropEffect::Copy,
-                            martensite_dnd::DropEffect::Move,
-                        ],
+                    self.accept_transfer(
+                        event_loop,
+                        *id,
+                        matches!(event, WindowEvent::DragEntered { .. }),
                     );
-                    if matches!(event, WindowEvent::DragDropped { .. }) {
-                        if let Ok(serial) = event_loop.fetch_data_transfer(*id, &TypeHint::UriList)
-                        {
-                            self.pending_drops.push(serial);
-                        }
+                }
+                let mut drop = drop_event(&event);
+                // On `DragDropped` the payload fetch completes the
+                // delivery via `DataTransferReceived`; without an
+                // accepted fetch the drop can never complete, so it is
+                // reported as a leave to clear hover state.
+                if let WindowEvent::DragDropped { id, .. } = &event {
+                    if !self.fetch_drop_payload(event_loop, *id) {
+                        drop = Some(DropEvent::Left);
                     }
                 }
-                let scale = DpiScale::new(self.scale() as f64);
-                if let (Some(drop), Some(arena), Some(root), Some(window)) = (
-                    convert_drop_event(&event, &scale),
-                    self.arena.as_mut(),
-                    self.root,
-                    self.window.as_ref(),
-                ) {
+                if let (Some(drop), Some(arena), Some(root), Some(window)) =
+                    (drop, self.arena.as_mut(), self.root, self.window.as_ref())
+                {
                     self.router
                         .dispatch_drop_event(arena, root, window.id(), &drop);
                 }
@@ -721,21 +785,34 @@ impl ApplicationHandler for Runner {
                 if !self.pending_drops.contains(&serial) {
                     return;
                 }
-                self.pending_drops.retain(|s| *s != serial);
-                let payload = if let Ok(paths) = value.try_as_file_paths() {
-                    martensite_core::DropPayload::Files(paths)
-                } else if let Ok(uris) = value.try_as_uris() {
-                    martensite_core::DropPayload::Uris(uris)
-                } else if let Ok(text) = value.try_as_string() {
-                    martensite_core::DropPayload::Text(text)
-                } else {
-                    martensite_core::DropPayload::Bytes(value.try_as_bytes().unwrap_or_default())
+                let payload = match drop_payload(value.as_ref()) {
+                    Ok(payload) => Some(payload),
+                    // Winit asks for a retry on the next
+                    // `DataTransferReceived` carrying this serial.
+                    Err(err) if is_pending(&err) => return,
+                    Err(err) => {
+                        tracing::warn!("martensite runner: drop payload unreadable: {err}");
+                        None
+                    }
                 };
+                self.pending_drops.retain(|s| *s != serial);
                 if let (Some(arena), Some(root), Some(window)) =
                     (self.arena.as_mut(), self.root, self.window.as_ref())
                 {
-                    self.router
-                        .dispatch_drop_payload(arena, root, window.id(), payload);
+                    match payload {
+                        Some(payload) => {
+                            self.router
+                                .dispatch_drop_payload(arena, root, window.id(), payload);
+                        }
+                        None => {
+                            self.router.dispatch_drop_event(
+                                arena,
+                                root,
+                                window.id(),
+                                &DropEvent::Left,
+                            );
+                        }
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -753,6 +830,40 @@ impl ApplicationHandler for Runner {
             }
             _ => {}
         }
+    }
+}
+
+/// Converts a pointer event at unit scale: arena bounds are laid out in
+/// physical pixels, so winit's physical positions are used unchanged.
+fn pointer_event(event: &WindowEvent) -> Option<PointerEvent> {
+    convert_window_event(event, &DpiScale::new(1.0))
+}
+
+/// Converts a drag event at unit scale for the same reason as
+/// [`pointer_event`].
+fn drop_event(event: &WindowEvent) -> Option<DropEvent> {
+    convert_drop_event(event, &DpiScale::new(1.0))
+}
+
+/// Whether a payload read failure is transient: winit reports
+/// `WouldBlock`/`Deadlock` and expects the read to be retried.
+fn is_pending(err: &io::Error) -> bool {
+    matches!(
+        err.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::Deadlock
+    )
+}
+
+/// Reads a fetched transfer as the payload its type describes.
+fn drop_payload(value: &dyn TypedData) -> io::Result<DropPayload> {
+    match value.type_().hint() {
+        Some(TypeHint::UriList) => match value.try_as_file_paths() {
+            Ok(paths) => Ok(DropPayload::Files(paths)),
+            Err(err) if is_pending(&err) => Err(err),
+            Err(_) => value.try_as_uris().map(DropPayload::Uris),
+        },
+        Some(TypeHint::Plaintext | TypeHint::Html) => value.try_as_string().map(DropPayload::Text),
+        _ => value.try_as_bytes().map(DropPayload::Bytes),
     }
 }
 
@@ -801,6 +912,7 @@ pub fn run(
         orchestrator: None,
         recovery: RecoveryMachine::new(),
         pending_drops: Vec::new(),
+        accepted_transfer: None,
         launch_error: Arc::clone(&launch_error),
         paint_list: PaintList::new(),
         needs_layout: true,
@@ -813,4 +925,198 @@ pub fn run(
         return Err(err);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use martensite_core::{DummyWidget, EventResponse, HotNode, NodeFlags, Rect};
+    use martensite_window::WindowId;
+    use winit::dpi::PhysicalPosition;
+    use winit::event::{ButtonSource, MouseButton as WinitMouseButton};
+
+    fn pressed_at(x: f64, y: f64) -> WindowEvent {
+        WindowEvent::PointerButton {
+            device_id: None,
+            state: ElementState::Pressed,
+            position: PhysicalPosition::new(x, y),
+            primary: true,
+            button: ButtonSource::Mouse(WinitMouseButton::Left),
+            is_macos_activation_click: false,
+        }
+    }
+
+    fn drag_at(x: f64, y: f64) -> WindowEvent {
+        WindowEvent::DragPosition {
+            id: DataTransferId::from_raw(1),
+            position: PhysicalPosition::new(x, y),
+            proposed_action: None,
+        }
+    }
+
+    /// Root widget covering physical pixels 300..400 on both axes.
+    fn physical_root(arena: &mut WidgetArena) -> WidgetId {
+        let hot = HotNode {
+            bounds: Rect::new(300.0, 300.0, 100.0, 100.0),
+            flags: NodeFlags::VISIBLE | NodeFlags::HIT_TEST_ENABLED,
+            ..HotNode::default()
+        };
+        arena.insert_with_widget(hot, Box::new(DummyWidget))
+    }
+
+    #[test]
+    fn pointer_event_keeps_physical_position_at_scale_two() {
+        let pe = pointer_event(&pressed_at(350.0, 350.0)).expect("pointer button converts");
+        assert_eq!(pe.position, Vec2::new(350.0, 350.0));
+        // The scaled conversion would halve the position at 2.0 — the
+        // mismatch the unit-scale helper avoids.
+        let scaled = convert_window_event(&pressed_at(350.0, 350.0), &DpiScale::new(2.0))
+            .expect("pointer button converts");
+        assert_eq!(scaled.position, Vec2::new(175.0, 175.0));
+    }
+
+    #[test]
+    fn drop_event_keeps_physical_position_at_scale_two() {
+        let drop = drop_event(&drag_at(350.0, 350.0)).expect("drag position converts");
+        assert_eq!(drop.position(), Some(Vec2::new(350.0, 350.0)));
+    }
+
+    #[test]
+    fn pointer_event_hits_physically_laid_out_widget() {
+        let mut arena = WidgetArena::new();
+        let root = physical_root(&mut arena);
+        let mut router = EventRouter::new();
+        let win = WindowId::from_raw(1);
+
+        let pe = pointer_event(&pressed_at(350.0, 350.0)).expect("pointer button converts");
+        assert_eq!(
+            router.dispatch_pointer_event(&mut arena, root, win, &pe),
+            Some(EventResponse::Ignored)
+        );
+
+        let halved = convert_window_event(&pressed_at(350.0, 350.0), &DpiScale::new(2.0))
+            .expect("pointer button converts");
+        assert_eq!(
+            router.dispatch_pointer_event(&mut arena, root, win, &halved),
+            None
+        );
+    }
+
+    #[test]
+    fn drop_event_hovers_physically_laid_out_widget() {
+        let mut arena = WidgetArena::new();
+        let root = physical_root(&mut arena);
+        let mut router = EventRouter::new();
+        let win = WindowId::from_raw(1);
+
+        let moved = drop_event(&drag_at(350.0, 350.0)).expect("drag position converts");
+        assert_eq!(
+            router.dispatch_drop_event(&mut arena, root, win, &moved),
+            Some(EventResponse::Ignored)
+        );
+
+        let halved = convert_drop_event(&drag_at(350.0, 350.0), &DpiScale::new(2.0))
+            .expect("drag position converts");
+        assert_eq!(
+            router.dispatch_drop_event(&mut arena, root, win, &halved),
+            None
+        );
+    }
+
+    /// Fake transfer whose conversions are scripted per test.
+    #[derive(Debug)]
+    struct FakeData {
+        hint: TypeHint,
+        pending: bool,
+        uris: Vec<String>,
+        text: String,
+    }
+
+    impl TypedData for FakeData {
+        fn type_(&self) -> &dyn TransferType {
+            &self.hint
+        }
+
+        fn try_read(&self) -> Option<Box<dyn io::BufRead>> {
+            None
+        }
+
+        fn try_as_uris(&self) -> io::Result<Vec<String>> {
+            if self.pending {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            Ok(self.uris.clone())
+        }
+
+        fn try_as_string(&self) -> io::Result<String> {
+            if self.pending {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            Ok(self.text.clone())
+        }
+    }
+
+    fn fake(hint: TypeHint) -> FakeData {
+        FakeData {
+            hint,
+            pending: false,
+            uris: Vec::new(),
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn drop_payload_uri_list_prefers_file_paths() {
+        let data = FakeData {
+            uris: vec!["file:///tmp/a.txt".into()],
+            ..fake(TypeHint::UriList)
+        };
+        assert!(matches!(
+            drop_payload(&data),
+            Ok(DropPayload::Files(paths)) if paths.len() == 1
+        ));
+    }
+
+    #[test]
+    fn drop_payload_non_file_uri_falls_back_to_uris() {
+        let data = FakeData {
+            uris: vec!["https://example.com/a".into()],
+            ..fake(TypeHint::UriList)
+        };
+        assert!(matches!(
+            drop_payload(&data),
+            Ok(DropPayload::Uris(uris)) if uris == ["https://example.com/a"]
+        ));
+    }
+
+    #[test]
+    fn drop_payload_plaintext_becomes_text() {
+        let data = FakeData {
+            text: "hello".into(),
+            ..fake(TypeHint::Plaintext)
+        };
+        assert!(matches!(
+            drop_payload(&data),
+            Ok(DropPayload::Text(t)) if t == "hello"
+        ));
+    }
+
+    #[test]
+    fn drop_payload_would_block_is_pending() {
+        let data = FakeData {
+            pending: true,
+            ..fake(TypeHint::Plaintext)
+        };
+        let err = drop_payload(&data).expect_err("pending read");
+        assert!(is_pending(&err));
+    }
+
+    #[test]
+    fn drop_payload_unreadable_bytes_is_final_error() {
+        let err = drop_payload(&fake(TypeHint::Image {
+            extension_hint: None,
+        }))
+        .expect_err("no byte source");
+        assert!(!is_pending(&err));
+    }
 }

@@ -48,9 +48,10 @@ impl Widget for Shell {
             WidgetEvent::Dropped { payload, .. } => {
                 self.drops += 1;
                 let what = match payload {
-                    martensite::core::DropPayload::Files(p) => {
-                        format!("{} file(s): {}", p.len(), p[0].display())
-                    }
+                    martensite::core::DropPayload::Files(p) => match p.first() {
+                        Some(first) => format!("{} file(s): {}", p.len(), first.display()),
+                        None => "0 file(s)".to_string(),
+                    },
                     martensite::core::DropPayload::Uris(u) => {
                         format!("{} uri(s)", u.len())
                     }

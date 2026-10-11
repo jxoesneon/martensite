@@ -372,6 +372,18 @@ During cursor motion, `DropTargetRegistry` tests the cursor coordinate against a
   - `DragLeave` $\rightarrow$ Target resets hover chrome to `DropTargetState::Idle`.
   - `Drop` $\rightarrow$ Target commits data and returns `DropOutcome`.
 
+### 6. Two Coexisting Delivery Models
+Drop handling currently has two models. They do not yet share one path:
+
+| Model | Entry point | Who receives events | Use it when |
+|---|---|---|---|
+| **Registry negotiation** | `DropBridge` and `DropTargetRegistry` in `martensite-dnd` | Registered `DropTarget`s that negotiate types and `DropEffect`s | You need MIME-type negotiation, drag-source sessions, or cross-window coordination through the bridge |
+| **Widget hit-test** | `EventRouter::dispatch_drop_event` and `dispatch_drop_payload` in `martensite-window` | The widget under the pointer, as `WidgetEvent::DropHover`, `DropHoverLeave`, and `Dropped { payload }` | Your widget simply accepts files, URIs, or text dropped onto it, as the `runner` path does |
+
+The native `runner` delivers OS drags through the second model: it fetches the payload (URI list, then plain text, then the first advertised type) and dispatches it to the widget under the pointer. Use the widget model for ordinary drop zones. Use `DropBridge` only where you need the negotiation features above.
+
+Convergence of the two models is planned before the API freeze. Until then, code written against one does not receive events from the other.
+
 ---
 
 ## 4. Common Pitfalls & Antipatterns

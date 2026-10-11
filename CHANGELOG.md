@@ -26,8 +26,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URIs, text, bytes); `EventRouter` gains `dispatch_drop_event` and
   `dispatch_drop_payload` with hover hit-testing, target transitions,
   per-window drag state, and root-widget fallback for positionless
-  drops — `EventKind::Dnd` now has a full dispatch path. Also: facade
-  `vello` feature passthrough and a shared `event::key_name` helper.
+  drops. Drop dispatch does not yet record `EventKind::Dnd` ledger
+  events; the devtools ledger variant exists but has no producer. Also:
+  facade `vello` feature passthrough and a shared `event::key_name`
+  helper.
+
+- **Tool palette multi-click seam** — A press with a click count of two
+  or more over a tool cell parks its index on `take_double_clicked`, a
+  drainable seam, while the release still selects the tool. Hosts can
+  bind a double-click action to a tool without losing selection.
+
+### Fixed — Runner Hardening & Drop Delivery
+
+- **Runner coordinate space** — Pointer and drag positions were divided
+  by the window scale factor, but arena bounds are laid out in physical
+  pixels, so hits on HiDPI displays landed at scale-reduced coordinates.
+  The runner now converts pointer and drop events at unit scale.
+
+- **Runner drop fetch** — `DragDropped` tries URI list, then plain text,
+  then the first remaining advertised type, and dispatches a leave when
+  the platform accepts no fetch. Payload reads that report `WouldBlock`
+  or `Deadlock` wait for the next `DataTransferReceived`; a final read
+  error dispatches a leave instead of delivering empty bytes. Accepted
+  drop actions are registered on enter and when the transfer changes,
+  not on every drag move.
+
+- **Runner lifecycle and rendering** — The window, arena, and root widget
+  persist across suspend and resume (only the GPU stack is rebuilt);
+  `LaunchError` distinguishes GPU init from window and surface failures;
+  surface extents clamp to `max_texture_dimension_2d` on create, resize,
+  and reconfigure; manual layout installs the ambient intl and measurer
+  guards and measures before laying out; the paint list is reused across
+  frames; `on_started` fires only after a frame presents; and
+  `RunnerConfig` is `#[non_exhaustive]`.
+
+### Known limitations
+
+- The canonical runner has no accessibility adapter yet; the widget
+  catalog path does. Runner-hosted applications are not exposed to
+  assistive technology in this release.
+- OS drag-and-drop reaches widgets through `EventRouter` hit-testing.
+  The `martensite-dnd` `DropBridge` negotiation model is separate;
+  convergence is planned before the API freeze (see cookbook 09).
 
 ### Fixed — Menu Popups & Web Surface Extents
 

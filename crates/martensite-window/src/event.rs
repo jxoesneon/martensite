@@ -1574,8 +1574,9 @@ impl EventRouter {
     /// - `Left` — dispatches `DropHoverLeave` to the tracked target and
     ///   clears the drop state.
     ///
-    /// Overlay popups are offered hover events first, matching scroll
-    /// dispatch. Returns the widget's [`EventResponse`], or `None` when
+    /// Targets are resolved by arena hit-test from `root` only; overlay
+    /// popups are not consulted, so drops over a popup go to the widget
+    /// beneath it. Returns the widget's [`EventResponse`], or `None` when
     /// nothing was hit.
     ///
     /// # Examples
