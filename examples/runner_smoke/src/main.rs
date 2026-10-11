@@ -92,7 +92,10 @@ fn build_root(arena: &mut WidgetArena, _scale: f32) -> WidgetId {
 }
 
 fn main() {
-    let cfg = RunnerConfig::new("runner_smoke").with_size(640.0, 360.0);
+    let mut cfg = RunnerConfig::new("runner_smoke").with_size(640.0, 360.0);
+    cfg.on_started = Some(Box::new(|| {
+        eprintln!("runner_smoke: first frame presented")
+    }));
     if let Err(err) = runner::run(cfg, build_root) {
         eprintln!("runner_smoke: {err}");
         std::process::exit(1);
