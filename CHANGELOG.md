@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Runner Accessibility, DnD Ledger & Converged Drops
+
+- **AccessKit adapter in the canonical runner** — `martensite::runner`
+  now wires the platform `accesskit_winit` adapter: the window is
+  created invisible, the initial tree is staged before reveal, AT
+  action requests are queued and dispatched through `decode_action` +
+  `dispatch_a11y_action`, and tree updates are emitted at most 10 Hz
+  (forced immediately on action dispatch or focus change). Queued AT
+  actions wake the event loop, so `ControlFlow::Wait` applies them
+  promptly. The adapter is one-shot with the window and survives GPU
+  suspend/resume. Runner-hosted applications are now exposed to
+  assistive technology.
+
+- **`EventKind::Dnd` ledger records** — `EventRouter::dispatch_drop_event`
+  and `dispatch_drop_payload` record drag hover, drop, leave, and
+  payload deliveries in the devtools event ledger (hit paths,
+  positions, `Handled`/`BubbledTo`/`Ignored` dispositions, and
+  `HitRejection` on misses) behind the `devtools` feature, matching the
+  pointer/scroll/keyboard paths.
+
+- **Converged drop delivery** — `martensite_dnd::DropSink` (implemented
+  for `WidgetArena` and `FnMut(WidgetId, &WidgetEvent) -> EventResponse`,
+  plus a no-op `NoSink`), `DropBridge::handle_with(input, sink)`,
+  `DropBridge::deliver_payload(payload, sink)`, and
+  `DropBridge::pending_drop_target()`. The bridge now delivers
+  `WidgetEvent::{DropHover, DropHoverLeave, Dropped}` to registered
+  targets during negotiation, so widgets see the same event API whether
+  the target came from arena hit-testing or registry negotiation.
+  `DropBridge::handle` keeps its existing semantics (no delivery).
+
+- **`martensite_window::surface_to_layout_scale`** — Per-axis factor
+  mapping raw surface pixels onto the clamped layout extent when the
+  surface was clamped to `max_texture_dimension_2d` (identity otherwise).
+
+- **`WebA11yBridge::set_css_scale`** — Layout-pixels→CSS-pixels factor
+  applied to mirror geometry, so the web a11y DOM positions correctly
+  at `devicePixelRatio != 1` and under surface clamping. The catalog
+  syncs it every frame.
+
+### Fixed — Clamped-Surface Input & Mirror Geometry
+
+- **Pointer/drop offset under surface clamping** — When an adapter caps
+  `max_texture_dimension_2d` below the canvas/window size, the arena
+  lays out at the clamped extent while pointer and drag positions
+  arrive in raw surface pixels, so hits were offset. The catalog and
+  the native runner now scale positions by `surface_to_layout_scale`.
+- **Web a11y mirror mispositioned** — Node bounds were written
+  verbatim as CSS pixels, wrong at `devicePixelRatio != 1` and under
+  clamping; the mirror is now canvas-relative and scaled via
+  `set_css_scale`.
+- **Browser gate coverage** — A new `web_clamped_surface_pointer_gate`
+  test loads the catalog with `?clamp_limit=1024` (test-only override)
+  on the oversize canvas and asserts a click reaches the widget under
+  it and that the a11y mirror rect contains the click point.
+
 ## [0.22.0] - 2026-10-10
 
 ### Added — Canonical Runner & Widget Drop Delivery
