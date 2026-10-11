@@ -84,7 +84,7 @@ pub use winit::event_loop::ActiveEventLoop;
 pub use winit::window::{Window, WindowAttributes, WindowId};
 
 pub use csd::{csd_region_for_point, CsdController, CsdHitRegion};
-pub use dpi::DpiScale;
+pub use dpi::{surface_to_layout_scale, DpiScale};
 pub use event::{
     convert_drop_event, convert_modifiers, convert_modifiers_state, convert_mouse_button,
     convert_window_event, ime_event_for_winit, DropAction, DropEvent, EventDispatchOutcome,

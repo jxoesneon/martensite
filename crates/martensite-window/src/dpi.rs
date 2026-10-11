@@ -150,9 +150,74 @@ impl Default for DpiScale {
     }
 }
 
+/// Per-axis factor mapping raw surface pixels onto a clamped layout
+/// extent.
+///
+/// When a window's surface extent exceeds the GPU's
+/// `max_texture_dimension_2d`, the swapchain — and with it the widget
+/// layout — is clamped to a smaller extent, but platform pointer
+/// positions still arrive in raw surface pixels. Multiplying a raw
+/// position by the returned `(sx, sy)` converts it into the clamped
+/// layout space (`sx = clamped.0 / raw.0`, `sy = clamped.1 / raw.1`).
+///
+/// Returns `(1.0, 1.0)` when the extents are equal (no clamp in effect)
+/// or when either `raw` axis is zero (a minimized/degenerate surface,
+/// where no meaningful ratio exists).
+///
+/// # Examples
+///
+/// ```
+/// use martensite_window::dpi::surface_to_layout_scale;
+///
+/// // No clamp: identity.
+/// assert_eq!(surface_to_layout_scale((1280, 860), (1280, 860)), (1.0, 1.0));
+///
+/// // A 2520×1320 surface clamped to a 2048 texture limit.
+/// let (sx, sy) = surface_to_layout_scale((2520, 1320), (2048, 1072));
+/// assert!((sx - 0.8127).abs() < 1e-3);
+/// assert!((sy - 0.8121).abs() < 1e-3);
+///
+/// // Degenerate raw extent: guarded to identity.
+/// assert_eq!(surface_to_layout_scale((0, 600), (1, 600)), (1.0, 1.0));
+/// ```
+#[must_use]
+pub fn surface_to_layout_scale(raw: (u32, u32), clamped: (u32, u32)) -> (f32, f32) {
+    if raw == clamped || raw.0 == 0 || raw.1 == 0 {
+        return (1.0, 1.0);
+    }
+    (
+        clamped.0 as f32 / raw.0 as f32,
+        clamped.1 as f32 / raw.1 as f32,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DpiScale;
+    use super::{surface_to_layout_scale, DpiScale};
+
+    #[test]
+    fn surface_to_layout_scale_identity_when_unclamped() {
+        assert_eq!(surface_to_layout_scale((800, 600), (800, 600)), (1.0, 1.0));
+        assert_eq!(surface_to_layout_scale((1, 1), (1, 1)), (1.0, 1.0));
+    }
+
+    #[test]
+    fn surface_to_layout_scale_is_per_axis_clamped_over_raw() {
+        let (sx, sy) = surface_to_layout_scale((2520, 1320), (2048, 1072));
+        assert!((sx - 0.8127).abs() < 1e-4, "sx = {sx}");
+        assert!((sy - 0.8121).abs() < 1e-4, "sy = {sy}");
+        assert_eq!(
+            surface_to_layout_scale((2000, 1000), (1000, 500)),
+            (0.5, 0.5)
+        );
+    }
+
+    #[test]
+    fn surface_to_layout_scale_guards_zero_raw_axes() {
+        assert_eq!(surface_to_layout_scale((0, 600), (1, 600)), (1.0, 1.0));
+        assert_eq!(surface_to_layout_scale((800, 0), (800, 1)), (1.0, 1.0));
+        assert_eq!(surface_to_layout_scale((0, 0), (1, 1)), (1.0, 1.0));
+    }
 
     #[test]
     fn default_is_identity_scale() {
