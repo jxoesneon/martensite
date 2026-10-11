@@ -36,12 +36,100 @@
 //! - **Position on drop**: winit's `DragDropped` event carries no position.
 //!   The bridge uses the last position reported by `DragEntered`/`DragPosition`
 //!   for the drop hit-test.
+//!
+//! # Widget delivery
+//!
+//! [`DropBridge::handle`] only updates registry and session state. To deliver
+//! the drop lifecycle to widgets, use [`DropBridge::handle_with`] together with
+//! a [`DropSink`] and complete drops with [`DropBridge::deliver_payload`]. The
+//! widget-facing events are the same `martensite_core::WidgetEvent` drop
+//! variants (`DropHover`, `DropHoverLeave`, `Dropped`) that
+//! `martensite-window`'s `EventRouter` delivers through arena hit-testing, so
+//! a widget handles drops identically regardless of which routing strategy
+//! the application uses.
 
 use crate::platform::{proposed_action_from_winit, ProposedAction};
-use crate::target::{DropTargetRegistry, TargetId};
+use crate::target::{DropTargetRegistry, DropTargetState, TargetId};
 use crate::{DndSessionManager, DropEffect, SessionId};
 use glam::Vec2;
+use martensite_core::{DropPayload, EventResponse, WidgetArena, WidgetEvent, WidgetId};
 use std::sync::Arc;
+
+/// Receives widget-facing drop events produced by
+/// [`DropBridge::handle_with`] and [`DropBridge::deliver_payload`].
+///
+/// A sink decides how an event reaches the widget identified by the
+/// registered [`DropTarget::widget_id`](crate::DropTarget::widget_id). The
+/// crate provides three implementations:
+///
+/// - [`WidgetArena`] — dispatches through
+///   [`WidgetArena::dispatch_event`], which installs the ambient
+///   internationalization context and bubbles unhandled events to ancestors.
+/// - Any `FnMut(WidgetId, &WidgetEvent) -> EventResponse` closure — useful for
+///   custom routing, logging, or tests.
+/// - [`NoSink`] — delivers nothing.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{EventResponse, WidgetEvent, WidgetId};
+/// use martensite_dnd::bridge::DropSink;
+///
+/// let mut seen = Vec::new();
+/// let mut sink = |id: WidgetId, event: &WidgetEvent| {
+///     seen.push((id, event.clone()));
+///     EventResponse::Handled
+/// };
+/// let id = WidgetId::from_parts(1, 1);
+/// assert_eq!(
+///     sink.deliver(id, &WidgetEvent::DropHoverLeave),
+///     EventResponse::Handled
+/// );
+/// assert_eq!(seen.len(), 1);
+/// ```
+pub trait DropSink {
+    /// Delivers `event` to the widget `target` and returns its response.
+    fn deliver(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse;
+}
+
+impl DropSink for WidgetArena {
+    fn deliver(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse {
+        self.dispatch_event(target, event)
+    }
+}
+
+impl<F> DropSink for F
+where
+    F: FnMut(WidgetId, &WidgetEvent) -> EventResponse,
+{
+    fn deliver(&mut self, target: WidgetId, event: &WidgetEvent) -> EventResponse {
+        self(target, event)
+    }
+}
+
+/// A [`DropSink`] that delivers nothing and always returns
+/// [`EventResponse::Ignored`].
+///
+/// [`DropBridge::handle`] uses this sink, so it only updates registry and
+/// session state.
+///
+/// # Examples
+///
+/// ```
+/// use martensite_core::{EventResponse, WidgetEvent, WidgetId};
+/// use martensite_dnd::bridge::{DropSink, NoSink};
+///
+/// let response = NoSink.deliver(WidgetId::from_parts(1, 1), &WidgetEvent::DropHoverLeave);
+/// assert_eq!(response, EventResponse::Ignored);
+/// ```
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct NoSink;
+
+impl DropSink for NoSink {
+    fn deliver(&mut self, _target: WidgetId, _event: &WidgetEvent) -> EventResponse {
+        EventResponse::Ignored
+    }
+}
 
 /// Normalized, winit-independent representation of a single incoming drag
 /// event.
@@ -154,6 +242,12 @@ pub struct DropBridge {
     incoming: Option<SessionId>,
     current_target: Option<TargetId>,
     last_position: Vec2,
+    /// Whether `last_position` was reported for the in-flight drag.
+    position_known: bool,
+    /// The accepted target (and its widget) that last received `DropHover`.
+    hovered: Option<(TargetId, WidgetId)>,
+    /// Widget and position awaiting the asynchronous drop payload.
+    pending_drop: Option<(WidgetId, Option<Vec2>)>,
 }
 
 impl Default for DropBridge {
@@ -172,6 +266,9 @@ impl DropBridge {
             incoming: None,
             current_target: None,
             last_position: Vec2::ZERO,
+            position_known: false,
+            hovered: None,
+            pending_drop: None,
         }
     }
 
@@ -209,8 +306,99 @@ impl DropBridge {
         self.current_target
     }
 
+    /// Returns the widget awaiting the payload of an accepted drop, if any.
+    ///
+    /// Set when [`handle_with`](Self::handle_with) (or [`handle`](Self::handle))
+    /// processes an accepted [`DropInput::Dropped`]; cleared by
+    /// [`deliver_payload`](Self::deliver_payload).
+    #[must_use]
+    pub fn pending_drop_target(&self) -> Option<WidgetId> {
+        self.pending_drop.map(|(widget, _)| widget)
+    }
+
     /// Processes a single [`DropInput`] event and returns the outcome.
+    ///
+    /// This updates registry and session state only; no widget receives an
+    /// event. It is equivalent to [`handle_with`](Self::handle_with) with a
+    /// [`NoSink`].
     pub fn handle(&mut self, input: DropInput) -> DropOutcome {
+        self.handle_with(input, &mut NoSink)
+    }
+
+    /// Processes a single [`DropInput`] event, delivers the resulting
+    /// widget-facing drop events to `sink`, and returns the outcome.
+    ///
+    /// Negotiation and state transitions are identical to
+    /// [`handle`](Self::handle). Events are delivered to the
+    /// [`DropTarget::widget_id`](crate::DropTarget::widget_id) of the
+    /// registered target under the drag:
+    ///
+    /// - `Entered`/`Moved` over a target that accepts the drag (state
+    ///   [`DropTargetState::Hovered`]) — [`WidgetEvent::DropHover`] with the
+    ///   current position. When the accepted target changes, the previous
+    ///   target's widget first receives [`WidgetEvent::DropHoverLeave`].
+    ///   Targets that reject the drag (MIME type or effect mismatch) receive
+    ///   **no** hover events, so a widget only paints a drop affordance when
+    ///   the drop would succeed.
+    /// - `Moved` off every accepting target, or `Left` — `DropHoverLeave` to
+    ///   the previously hovered widget.
+    /// - `Dropped` accepted by the target — nothing is delivered yet; the
+    ///   widget and last position are recorded as the pending drop. Fetch the
+    ///   transfer data and call [`deliver_payload`](Self::deliver_payload)
+    ///   when it arrives to deliver [`WidgetEvent::Dropped`].
+    /// - `Dropped` rejected or over no target — `DropHoverLeave` to the
+    ///   hovered widget, if any, and any pending drop is discarded.
+    ///
+    /// # Coordinate space
+    ///
+    /// Drag positions and registered [`DropTarget`](crate::DropTarget)
+    /// bounds must share one coordinate space; the same position is
+    /// forwarded in `DropHover`/`Dropped`. Arena-based applications that lay
+    /// out in physical pixels (as the stock runner does) should register
+    /// physical-pixel bounds and pass a `scale_factor` of `1.0` to
+    /// [`convert_winit_drop_event`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::{DropPayload, EventResponse, Rect, WidgetEvent, WidgetId};
+    /// use martensite_dnd::bridge::{DropBridge, DropInput};
+    /// use martensite_dnd::platform::ProposedAction;
+    /// use martensite_dnd::{DropEffectMask, DropTarget};
+    ///
+    /// let widget = WidgetId::from_parts(1, 1);
+    /// let mut bridge = DropBridge::new();
+    /// bridge.registry_mut().register(
+    ///     DropTarget::new(widget, vec!["text/plain".into()], DropEffectMask::COPY)
+    ///         .with_bounds(Rect::new(0.0, 0.0, 100.0, 100.0)),
+    /// );
+    ///
+    /// let mut log = Vec::new();
+    /// let mut sink = |id: WidgetId, event: &WidgetEvent| {
+    ///     log.push((id, event.clone()));
+    ///     EventResponse::Handled
+    /// };
+    /// bridge.handle_with(
+    ///     DropInput::Entered {
+    ///         available_types: vec!["text/plain".into()],
+    ///         position: Some(glam::Vec2::new(10.0, 10.0)),
+    ///         action: ProposedAction::Copy,
+    ///     },
+    ///     &mut sink,
+    /// );
+    /// let outcome = bridge.handle_with(
+    ///     DropInput::Dropped { action: ProposedAction::Copy },
+    ///     &mut sink,
+    /// );
+    /// assert!(outcome.accepted);
+    /// assert_eq!(bridge.pending_drop_target(), Some(widget));
+    ///
+    /// // The payload arrives asynchronously.
+    /// bridge.deliver_payload(DropPayload::Text("hi".into()), &mut sink);
+    /// assert!(matches!(log[0].1, WidgetEvent::DropHover { .. }));
+    /// assert!(matches!(log[1].1, WidgetEvent::Dropped { .. }));
+    /// ```
+    pub fn handle_with(&mut self, input: DropInput, sink: &mut dyn DropSink) -> DropOutcome {
         match input {
             DropInput::Entered {
                 available_types,
@@ -226,18 +414,20 @@ impl DropBridge {
                     None,
                 );
                 self.incoming = Some(id);
+                self.position_known = position.is_some();
                 if let Some(pos) = position {
                     self.last_position = pos;
                 }
-                self.update_hover()
+                self.update_hover(sink)
             }
             DropInput::Moved {
                 position,
                 action: _,
             } => {
                 self.last_position = position;
+                self.position_known = true;
                 if self.incoming.is_some() {
-                    self.update_hover()
+                    self.update_hover(sink)
                 } else {
                     DropOutcome::default()
                 }
@@ -250,15 +440,29 @@ impl DropBridge {
                     // No target under the drop: cancel the session.
                     self.sessions.cancel_session(id);
                     self.incoming = None;
+                    self.reject_drop(sink);
                     return DropOutcome::default();
                 };
                 let Some(session) = self.sessions.session_mut(id) else {
                     self.incoming = None;
+                    self.reject_drop(sink);
                     return DropOutcome::default();
                 };
                 let effect = self.registry.drop_on_target(target, session);
                 self.incoming = None;
                 self.current_target = None;
+                let widget = self.registry.get(target).map(|t| t.widget_id);
+                match (effect, widget) {
+                    (Some(_), Some(widget)) => {
+                        // The drop ends the hover; `Dropped` follows with the
+                        // payload, so no `DropHoverLeave` is sent (matching
+                        // the arena router).
+                        self.hovered = None;
+                        let position = self.position_known.then_some(self.last_position);
+                        self.pending_drop = Some((widget, position));
+                    }
+                    _ => self.reject_drop(sink),
+                }
                 DropOutcome {
                     accepted: effect.is_some(),
                     effect,
@@ -275,14 +479,81 @@ impl DropBridge {
                 }
                 self.incoming = None;
                 self.current_target = None;
+                if let Some((_, widget)) = self.hovered.take() {
+                    sink.deliver(widget, &WidgetEvent::DropHoverLeave);
+                }
                 DropOutcome::default()
             }
         }
     }
 
+    /// Delivers [`WidgetEvent::Dropped`] carrying `payload` to the pending
+    /// drop target recorded by an accepted [`DropInput::Dropped`], and clears
+    /// the pending drop.
+    ///
+    /// Returns the widget's [`EventResponse`], or `None` when no drop is
+    /// pending.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite_core::DropPayload;
+    /// use martensite_dnd::bridge::{DropBridge, NoSink};
+    ///
+    /// let mut bridge = DropBridge::new();
+    /// assert!(bridge
+    ///     .deliver_payload(DropPayload::Text("x".into()), &mut NoSink)
+    ///     .is_none());
+    /// ```
+    pub fn deliver_payload(
+        &mut self,
+        payload: DropPayload,
+        sink: &mut dyn DropSink,
+    ) -> Option<EventResponse> {
+        let (widget, position) = self.pending_drop.take()?;
+        Some(sink.deliver(widget, &WidgetEvent::Dropped { position, payload }))
+    }
+
+    /// Ends hover delivery for a drop that was rejected or landed on no
+    /// target.
+    fn reject_drop(&mut self, sink: &mut dyn DropSink) {
+        self.pending_drop = None;
+        if let Some((_, widget)) = self.hovered.take() {
+            sink.deliver(widget, &WidgetEvent::DropHoverLeave);
+        }
+    }
+
+    /// Recomputes the hovered target and delivers hover transitions to
+    /// `sink`.
+    fn update_hover(&mut self, sink: &mut dyn DropSink) -> DropOutcome {
+        let outcome = self.update_hover_state();
+        let new_hovered = if outcome.accepted {
+            outcome
+                .target
+                .and_then(|tid| self.registry.get(tid).map(|target| (tid, target.widget_id)))
+        } else {
+            None
+        };
+        if self.hovered.map(|(tid, _)| tid) != new_hovered.map(|(tid, _)| tid) {
+            if let Some((_, old)) = self.hovered {
+                sink.deliver(old, &WidgetEvent::DropHoverLeave);
+            }
+        }
+        self.hovered = new_hovered;
+        if let Some((_, widget)) = new_hovered {
+            sink.deliver(
+                widget,
+                &WidgetEvent::DropHover {
+                    position: self.last_position,
+                },
+            );
+        }
+        outcome
+    }
+
     /// Recomputes the hovered target from `last_position` and the current
     /// incoming session, entering/leaving targets as needed.
-    fn update_hover(&mut self) -> DropOutcome {
+    fn update_hover_state(&mut self) -> DropOutcome {
         let id = match self.incoming {
             Some(id) => id,
             None => return DropOutcome::default(),
@@ -297,7 +568,7 @@ impl DropBridge {
         // Use enter_at to find+enter in one step, capturing the id and state.
         let (new_id, state) = match self.registry.enter_at(self.last_position, session) {
             Some((tid, st)) => (Some(tid), st),
-            None => (None, crate::target::DropTargetState::Idle),
+            None => (None, DropTargetState::Idle),
         };
         // Leave the previously-hovered target if it changed.
         if self.current_target != new_id {
@@ -306,7 +577,7 @@ impl DropBridge {
             }
         }
         self.current_target = new_id;
-        let accepted = state == crate::target::DropTargetState::Hovered;
+        let accepted = state == DropTargetState::Hovered;
         // On hover-accept, tentatively report Copy as the negotiated effect
         // (the built-in Copy > Move > Link priority used by `drop_on_target`).
         // The caller may override via `set_accepted_actions` on the platform.
@@ -333,6 +604,14 @@ impl DropBridge {
 /// For the other variants the type list is irrelevant.
 ///
 /// Returns `None` for non-drag events.
+///
+/// # Coordinate space
+///
+/// The converted positions must be in the same coordinate space as the
+/// bounds registered on the [`DropBridge`]'s targets. A `scale_factor` of the
+/// window's DPI scale yields logical positions (pair with logical bounds);
+/// arena-based applications that lay out in physical pixels (as the stock
+/// runner does) should register physical-pixel bounds and pass `1.0`.
 ///
 /// # Examples
 ///
@@ -719,5 +998,341 @@ mod tests {
         assert!(o3.accepted);
         assert_eq!(o3.effect, Some(DropEffect::Copy));
         assert!(bridge.incoming_session().is_none());
+    }
+
+    // ---- Widget delivery (`handle_with` / `deliver_payload`) ----
+
+    const W1: WidgetId = WidgetId::from_parts(1, 1);
+    const W2: WidgetId = WidgetId::from_parts(2, 1);
+
+    /// Two side-by-side `text/plain` targets: W1 at x 0..100, W2 at
+    /// x 100..200 (both y 0..100).
+    fn two_target_bridge() -> DropBridge {
+        let mut bridge = registered_bridge();
+        bridge.registry_mut().register(
+            DropTarget::new(W2, vec!["text/plain".into()], DropEffectMask::COPY)
+                .with_bounds(Rect::new(100.0, 0.0, 100.0, 100.0)),
+        );
+        bridge
+    }
+
+    type Log = Vec<(WidgetId, WidgetEvent)>;
+
+    fn recorder(log: &mut Log) -> impl FnMut(WidgetId, &WidgetEvent) -> EventResponse + '_ {
+        move |id, event| {
+            log.push((id, event.clone()));
+            EventResponse::Handled
+        }
+    }
+
+    fn entered(x: f32, y: f32) -> DropInput {
+        DropInput::Entered {
+            available_types: vec!["text/plain".into()],
+            position: Some(Vec2::new(x, y)),
+            action: ProposedAction::Copy,
+        }
+    }
+
+    fn moved(x: f32, y: f32) -> DropInput {
+        DropInput::Moved {
+            position: Vec2::new(x, y),
+            action: ProposedAction::Copy,
+        }
+    }
+
+    fn dropped() -> DropInput {
+        DropInput::Dropped {
+            action: ProposedAction::Copy,
+        }
+    }
+
+    fn hover(x: f32, y: f32) -> WidgetEvent {
+        WidgetEvent::DropHover {
+            position: Vec2::new(x, y),
+        }
+    }
+
+    #[test]
+    fn handle_with_enter_over_target_delivers_hover() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let outcome = bridge.handle_with(entered(10.0, 20.0), &mut recorder(&mut log));
+        assert!(outcome.accepted);
+        assert_eq!(log, vec![(W1, hover(10.0, 20.0))]);
+    }
+
+    #[test]
+    fn handle_with_move_within_target_delivers_hover_with_new_position() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        bridge.handle_with(moved(30.0, 40.0), &mut sink);
+        drop(sink);
+        assert_eq!(log, vec![(W1, hover(10.0, 10.0)), (W1, hover(30.0, 40.0))]);
+    }
+
+    #[test]
+    fn handle_with_move_to_second_target_leaves_first() {
+        let mut bridge = two_target_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        bridge.handle_with(moved(150.0, 10.0), &mut sink);
+        drop(sink);
+        assert_eq!(
+            log,
+            vec![
+                (W1, hover(10.0, 10.0)),
+                (W1, WidgetEvent::DropHoverLeave),
+                (W2, hover(150.0, 10.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn handle_with_move_off_targets_delivers_leave() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        bridge.handle_with(moved(500.0, 500.0), &mut sink);
+        // Further moves outside deliver nothing more.
+        bridge.handle_with(moved(600.0, 600.0), &mut sink);
+        drop(sink);
+        assert_eq!(
+            log,
+            vec![(W1, hover(10.0, 10.0)), (W1, WidgetEvent::DropHoverLeave)]
+        );
+    }
+
+    #[test]
+    fn handle_with_left_delivers_leave() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        bridge.handle_with(DropInput::Left, &mut sink);
+        // A second Left has nothing to leave.
+        bridge.handle_with(DropInput::Left, &mut sink);
+        drop(sink);
+        assert_eq!(
+            log,
+            vec![(W1, hover(10.0, 10.0)), (W1, WidgetEvent::DropHoverLeave)]
+        );
+        assert!(bridge.pending_drop_target().is_none());
+    }
+
+    #[test]
+    fn handle_with_accepted_drop_then_payload_delivers_dropped() {
+        let mut bridge = two_target_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        bridge.handle_with(moved(150.0, 20.0), &mut sink);
+        let outcome = bridge.handle_with(dropped(), &mut sink);
+        assert!(outcome.accepted);
+        assert_eq!(bridge.pending_drop_target(), Some(W2));
+        let response = bridge.deliver_payload(DropPayload::Text("hello".into()), &mut sink);
+        assert_eq!(response, Some(EventResponse::Handled));
+        assert!(bridge.pending_drop_target().is_none());
+        // The pending drop is consumed exactly once.
+        assert!(bridge
+            .deliver_payload(DropPayload::Text("again".into()), &mut sink)
+            .is_none());
+        drop(sink);
+        assert_eq!(
+            log,
+            vec![
+                (W1, hover(10.0, 10.0)),
+                (W1, WidgetEvent::DropHoverLeave),
+                (W2, hover(150.0, 20.0)),
+                (
+                    W2,
+                    WidgetEvent::Dropped {
+                        position: Some(Vec2::new(150.0, 20.0)),
+                        payload: DropPayload::Text("hello".into()),
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn handle_with_drop_without_reported_position_has_none_position() {
+        let mut bridge = registered_bridge();
+        // Bounds include the origin, which `last_position` defaults to.
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(
+            DropInput::Entered {
+                available_types: vec!["text/plain".into()],
+                position: None,
+                action: ProposedAction::Copy,
+            },
+            &mut sink,
+        );
+        bridge.handle_with(dropped(), &mut sink);
+        bridge.deliver_payload(DropPayload::Bytes(vec![1]), &mut sink);
+        drop(sink);
+        assert_eq!(
+            log.last(),
+            Some(&(
+                W1,
+                WidgetEvent::Dropped {
+                    position: None,
+                    payload: DropPayload::Bytes(vec![1]),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn handle_with_rejected_type_delivers_no_hover() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        let outcome = bridge.handle_with(
+            DropInput::Entered {
+                available_types: vec!["image/png".into()],
+                position: Some(Vec2::new(10.0, 10.0)),
+                action: ProposedAction::Copy,
+            },
+            &mut sink,
+        );
+        assert!(!outcome.accepted);
+        bridge.handle_with(moved(20.0, 20.0), &mut sink);
+        let outcome = bridge.handle_with(dropped(), &mut sink);
+        assert!(!outcome.accepted);
+        assert!(bridge.pending_drop_target().is_none());
+        assert!(bridge
+            .deliver_payload(DropPayload::Text("x".into()), &mut sink)
+            .is_none());
+        drop(sink);
+        assert!(
+            log.is_empty(),
+            "rejected target must get no events: {log:?}"
+        );
+    }
+
+    #[test]
+    fn handle_with_drop_without_target_delivers_nothing() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(500.0, 500.0), &mut sink);
+        let outcome = bridge.handle_with(dropped(), &mut sink);
+        assert!(!outcome.accepted);
+        assert!(bridge.pending_drop_target().is_none());
+        assert!(bridge
+            .deliver_payload(DropPayload::Text("x".into()), &mut sink)
+            .is_none());
+        drop(sink);
+        assert!(log.is_empty());
+    }
+
+    #[test]
+    fn handle_with_rejected_drop_on_hovered_target_delivers_leave() {
+        let mut bridge = registered_bridge();
+        let mut log = Log::new();
+        let mut sink = recorder(&mut log);
+        bridge.handle_with(entered(10.0, 10.0), &mut sink);
+        // The target vanishes before the drop lands: the drop is rejected
+        // and the hovered widget's affordance must be cleared.
+        let tid = bridge.current_target().unwrap();
+        bridge.registry_mut().unregister(tid);
+        let outcome = bridge.handle_with(dropped(), &mut sink);
+        assert!(!outcome.accepted);
+        assert!(bridge.pending_drop_target().is_none());
+        drop(sink);
+        assert_eq!(
+            log,
+            vec![(W1, hover(10.0, 10.0)), (W1, WidgetEvent::DropHoverLeave)]
+        );
+    }
+
+    #[test]
+    fn handle_records_pending_drop_without_delivering() {
+        let mut bridge = registered_bridge();
+        bridge.handle(entered(10.0, 10.0));
+        assert!(bridge.handle(dropped()).accepted);
+        assert_eq!(bridge.pending_drop_target(), Some(W1));
+        let mut log = Log::new();
+        bridge.deliver_payload(DropPayload::Text("x".into()), &mut recorder(&mut log));
+        assert_eq!(log.len(), 1);
+        assert!(matches!(log[0].1, WidgetEvent::Dropped { .. }));
+    }
+
+    #[test]
+    fn no_sink_ignores_events() {
+        assert_eq!(
+            NoSink.deliver(W1, &WidgetEvent::DropHoverLeave),
+            EventResponse::Ignored
+        );
+    }
+
+    /// A widget recording the drop-phase events it receives.
+    struct DropLog {
+        log: Arc<std::sync::Mutex<Vec<WidgetEvent>>>,
+    }
+
+    impl martensite_core::Widget for DropLog {
+        fn measure(
+            &mut self,
+            _cx: &mut martensite_core::LayoutContext,
+            _constraints: martensite_core::LayoutConstraints,
+        ) -> Vec2 {
+            Vec2::ZERO
+        }
+        fn layout(&mut self, _cx: &mut martensite_core::LayoutContext, _bounds: Rect) {}
+        fn event(&mut self, cx: &mut martensite_core::EventContext) -> EventResponse {
+            self.log.lock().unwrap().push(cx.event.clone());
+            EventResponse::Handled
+        }
+    }
+
+    #[test]
+    fn widget_arena_sink_delivers_dropped_end_to_end() {
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut arena = WidgetArena::new();
+        let widget = arena.insert_with_widget(
+            martensite_core::HotNode {
+                bounds: Rect::new(0.0, 0.0, 50.0, 50.0),
+                flags: martensite_core::NodeFlags::VISIBLE,
+                ..martensite_core::HotNode::default()
+            },
+            Box::new(DropLog {
+                log: Arc::clone(&log),
+            }),
+        );
+        let mut bridge = DropBridge::new();
+        bridge.registry_mut().register(
+            DropTarget::new(widget, vec!["text/uri-list".into()], DropEffectMask::COPY)
+                .with_bounds(Rect::new(0.0, 0.0, 50.0, 50.0)),
+        );
+        bridge.handle_with(
+            DropInput::Entered {
+                available_types: vec!["text/uri-list".into()],
+                position: Some(Vec2::new(5.0, 5.0)),
+                action: ProposedAction::Copy,
+            },
+            &mut arena,
+        );
+        assert!(bridge.handle_with(dropped(), &mut arena).accepted);
+        let payload = DropPayload::Files(vec!["/tmp/a.png".into()]);
+        assert_eq!(
+            bridge.deliver_payload(payload.clone(), &mut arena),
+            Some(EventResponse::Handled)
+        );
+        assert_eq!(
+            log.lock().unwrap().as_slice(),
+            &[
+                hover(5.0, 5.0),
+                WidgetEvent::Dropped {
+                    position: Some(Vec2::new(5.0, 5.0)),
+                    payload,
+                },
+            ]
+        );
     }
 }

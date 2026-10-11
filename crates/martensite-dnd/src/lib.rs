@@ -14,7 +14,9 @@
 //! [`DndPlatform`] OS trait seam, capability detection,
 //! and the winit-backed backend plus an unsupported fallback. The [`bridge`]
 //! module wires incoming OS drag events to the internal model via
-//! [`DropBridge`].
+//! [`DropBridge`], and delivers the drop lifecycle to widgets as
+//! `martensite_core::WidgetEvent` drop events through a [`DropSink`]
+//! ([`DropBridge::handle_with`] / [`DropBridge::deliver_payload`]).
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -27,7 +29,7 @@ pub mod target;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub mod web;
 
-pub use bridge::{convert_winit_drop_event, DropBridge, DropInput, DropOutcome};
+pub use bridge::{convert_winit_drop_event, DropBridge, DropInput, DropOutcome, DropSink, NoSink};
 pub use platform::{
     DndCapabilities, DndPlatform, DndPlatformError, DragPayload, DropTypeHint, PlatformTransferId,
     ProposedAction, UnsupportedDndPlatform, WinitDndPlatform,
