@@ -430,21 +430,23 @@ Platform pasteboards query data synchronously when an external app requests it. 
 ### 3. Mixing Physical Window Pixels with Logical Points
 **Wrong:**
 ```rust
+// Bounds were laid out in logical points, the position is physical.
 fn handle_drag_move(&mut self, physical_x: f64, physical_y: f64) {
-    let hit = self.cached_bounds.contains(Vec2::new(physical_x as f32, physical_y as f32)); // BAD on HiDPI!
+    let hit = self.logical_bounds.contains(Vec2::new(physical_x as f32, physical_y as f32)); // BAD on HiDPI!
 }
 ```
 **Right:**
 ```rust
+// Convert the position into the space the bounds were laid out in.
 fn handle_drag_move(&mut self, physical_pos: (f64, f64), scale: f32) {
     let logical_pos = Vec2::new(
         (physical_pos.0 / scale as f64) as f32,
         (physical_pos.1 / scale as f64) as f32,
     );
-    let hit = self.cached_bounds.contains(logical_pos);
+    let hit = self.logical_bounds.contains(logical_pos);
 }
 ```
-All widget coordinates, layout boundaries, and target registries operate in **logical points**. Platform drag coordinates from winit or OLE must be divided by the window's `DpiScale` before hit-testing.
+A hit test is only correct when the position and the bounds share one coordinate space. The native `runner` and the widget catalog lay the arena out at the surface's physical size, so `EventRouter` drop and pointer delivery takes winit's **physical** positions unchanged; dividing them by `DpiScale` on that path makes HiDPI drops miss. Only divide by the scale when the bounds you test against, such as a custom `DropTargetRegistry`, were registered in logical points.
 
 ### 4. Forgetting `DropLeave` Cleanup on Window Blur or Esc
 When a user presses `Escape` or moves the mouse outside the window, the OS cancels the drag operation. If a drop target only resets its visual state on `Drop`, cancelled operations leave permanent hover borders or insertion indicators on the screen. Always ensure the `DropBridge` routes cancel events to `registry.clear_active_hovers()`.
