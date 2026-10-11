@@ -95,6 +95,8 @@ pub struct ToolPalette {
     tools: Vec<ToolItem>,
     selected: usize,
     selected_out: Option<usize>,
+    /// Cell of the last multi-click press, awaiting [`Self::take_double_clicked`].
+    double_out: Option<usize>,
     hovered: Option<usize>,
     rects: Vec<Rect>,
     text_painter: Option<SharedTextPainter>,
@@ -133,6 +135,7 @@ impl ToolPalette {
             tools: Vec::new(),
             selected: 0,
             selected_out: None,
+            double_out: None,
             hovered: None,
             rects: Vec::new(),
             text_painter: None,
@@ -263,6 +266,23 @@ impl ToolPalette {
         self.selected_out.take()
     }
 
+    /// Drains the index of the last multi-clicked cell. The window layer
+    /// reports a `count` on [`WidgetEvent::PointerPressed`]; a press with
+    /// `count >= 2` over a cell records it here. The following release still
+    /// selects the cell, so a double-click both picks the tool and reports
+    /// the gesture — the host decides what the second click means (e.g. a
+    /// tool-specific action).
+    ///
+    /// ```
+    /// use martensite::widgets::tool_palette::ToolPalette;
+    ///
+    /// let mut p = ToolPalette::new();
+    /// assert_eq!(p.take_double_clicked(), None);
+    /// ```
+    pub fn take_double_clicked(&mut self) -> Option<usize> {
+        self.double_out.take()
+    }
+
     /// Cell hit-test.
     fn cell_at(&self, p: Vec2) -> Option<usize> {
         self.rects.iter().position(|r| r.contains(p))
@@ -352,6 +372,17 @@ impl Widget for ToolPalette {
             WidgetEvent::PointerLeave => {
                 if self.hovered.take().is_some() {
                     return EventResponse::RequestRepaint;
+                }
+                EventResponse::Ignored
+            }
+            WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position,
+                count,
+            } => {
+                if *count >= 2 && self.cell_at(*position).is_some() {
+                    self.double_out = self.cell_at(*position);
+                    return EventResponse::Handled;
                 }
                 EventResponse::Ignored
             }
@@ -555,6 +586,67 @@ mod tests {
             },
         );
         assert_eq!(p.take_selected(), None);
+    }
+
+    #[test]
+    fn double_click_parks_the_gesture_and_still_selects() {
+        let mut p = fixture();
+        laid_out(&mut p);
+        let r = p.rects[1];
+        let center = Vec2::new((r.min_x() + r.max_x()) / 2.0, (r.min_y() + r.max_y()) / 2.0);
+        // The second press of a double-click arrives with `count >= 2`.
+        ev(
+            &mut p,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: center,
+                count: 2,
+            },
+        );
+        assert_eq!(p.take_double_clicked(), Some(1));
+        // The release that follows still selects the cell.
+        ev(
+            &mut p,
+            &WidgetEvent::PointerReleased {
+                button: PointerButton::Primary,
+                position: center,
+            },
+        );
+        assert_eq!(p.current(), Some(1));
+        assert_eq!(p.take_selected(), Some(1));
+        assert_eq!(p.take_double_clicked(), None, "the seam drains once");
+    }
+
+    #[test]
+    fn single_press_reports_no_double_click() {
+        let mut p = fixture();
+        laid_out(&mut p);
+        let r = p.rects[0];
+        let center = Vec2::new((r.min_x() + r.max_x()) / 2.0, (r.min_y() + r.max_y()) / 2.0);
+        ev(
+            &mut p,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: center,
+                count: 1,
+            },
+        );
+        assert_eq!(p.take_double_clicked(), None);
+    }
+
+    #[test]
+    fn double_press_outside_a_cell_reports_nothing() {
+        let mut p = fixture();
+        laid_out(&mut p);
+        ev(
+            &mut p,
+            &WidgetEvent::PointerPressed {
+                button: PointerButton::Primary,
+                position: Vec2::new(500.0, 500.0),
+                count: 2,
+            },
+        );
+        assert_eq!(p.take_double_clicked(), None);
     }
 
     #[test]
