@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   facade `vello` feature passthrough and a shared `event::key_name`
   helper.
 
+- **`Widget::is_orphaned`** — A default `false` trait method that lets a
+  popup's content report a defunct controller. Overlays sweep orphaned
+  entries on the next layout pass instead of leaving them painted and
+  hit-testable. Ordinary widgets never report orphaned.
+
 - **Tool palette multi-click seam** — A press with a click count of two
   or more over a tool cell parks its index on `take_double_clicked`, a
   drainable seam, while the release still selects the tool. Hosts can
@@ -47,9 +52,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   then the first remaining advertised type, and dispatches a leave when
   the platform accepts no fetch. Payload reads that report `WouldBlock`
   or `Deadlock` wait for the next `DataTransferReceived`; a final read
-  error dispatches a leave instead of delivering empty bytes. Accepted
-  drop actions are registered on enter and when the transfer changes,
-  not on every drag move.
+  error dispatches a leave instead of delivering empty bytes. Drop
+  payloads over 64 MiB are rejected and dispatched as a leave; text and
+  bytes are read through a capped stream. At most eight drop fetches
+  are in flight; the oldest is evicted beyond that. Accepted drop
+  actions are registered on enter and when the transfer changes, not on
+  every drag move.
 
 - **Runner lifecycle and rendering** — The window, arena, and root widget
   persist across suspend and resume (only the GPU stack is rebuilt);
@@ -68,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OS drag-and-drop reaches widgets through `EventRouter` hit-testing.
   The `martensite-dnd` `DropBridge` negotiation model is separate;
   convergence is planned before the API freeze (see cookbook 09).
+- Drop hit-testing ignores open overlay popups; a drop over a popup
+  lands on the widget beneath it.
+- `RunnerConfig::control_flow = Wait` repaints only in response to
+  window events, so animations and `drains` advance only on events.
+  The default `Poll` is unaffected.
 
 ### Fixed — Menu Popups & Web Surface Extents
 

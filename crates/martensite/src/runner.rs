@@ -35,7 +35,7 @@
 //!
 //! [`ApplicationHandler`]: winit::application::ApplicationHandler
 
-use std::io;
+use std::io::{self, Read};
 use std::sync::Arc;
 
 use glam::Vec2;
@@ -62,6 +62,14 @@ use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, EventLoop};
 use winit::icon::Icon;
 use winit::window::{Window, WindowAttributes, WindowId};
+
+/// Largest drop payload, in bytes, the runner reads into memory. Larger
+/// transfers are rejected and dispatched as a leave.
+const MAX_DROP_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
+
+/// Maximum in-flight `fetch_data_transfer` requests; the oldest is
+/// evicted beyond this so abandoned drags cannot grow the list.
+const MAX_PENDING_DROPS: usize = 8;
 
 /// Per-frame drain hook — runs after `WidgetArena::tick`, before the
 /// paint list is built. Apps use this to pump control channels,
@@ -94,6 +102,20 @@ pub type GpuFactory =
 /// callers implementing GPU crash-sentinels can tell "the renderer
 /// could not start" (preserve crash evidence, try software fallback)
 /// from "the window/event loop failed" (restore prior evidence).
+///
+/// # Examples
+///
+/// ```
+/// use martensite::runner::LaunchError;
+///
+/// let err = LaunchError::GpuInit("no adapter".into());
+/// assert_eq!(err.to_string(), "gpu initialization: no adapter");
+/// let is_gpu = match err {
+///     LaunchError::GpuInit(_) => true,
+///     _ => false,
+/// };
+/// assert!(is_gpu);
+/// ```
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum LaunchError {
@@ -156,8 +178,10 @@ pub struct RunnerConfig {
     pub backdrop: BackdropMode,
     /// Presentation pacing preference for the surface.
     pub present_mode: PresentModePreference,
-    /// Event loop control flow — `Poll` keeps continuous redraws
-    /// (animation cadence); `Wait` sleeps between events.
+    /// Event loop control flow. `Poll` (default) redraws continuously.
+    /// `Wait` repaints only in response to window events, so animations
+    /// and `drains` advance only on events; use `Poll` for animated UIs
+    /// or async drains.
     pub control_flow: ControlFlow,
     /// Orchestrator policy: software fallback, CPU preference.
     pub orchestrator: OrchestratorConfig,
@@ -444,6 +468,7 @@ impl Runner {
         self.paint_list.clear();
         arena.build_paint_list(root, &mut self.paint_list);
 
+        // `create_surfaces` requests a redraw when the GPU stack returns on resume.
         let (Some(window), Some(gpu), Some(surface), Some(orchestrator)) = (
             self.window.as_ref(),
             self.gpu.as_ref(),
@@ -475,11 +500,25 @@ impl Runner {
                         size.height.max(1),
                         gpu.device.limits().max_texture_dimension_2d,
                     );
-                    let _ = surface.resize(&gpu.device, w, h);
+                    if let Err(err) = surface.resize(&gpu.device, w, h) {
+                        tracing::warn!(
+                            "martensite runner: surface resize after acquire failure: {err}"
+                        );
+                    }
                 }
             }
         }
-        window.request_redraw();
+        if self.config.control_flow == ControlFlow::Poll {
+            window.request_redraw();
+        }
+    }
+
+    /// Requests a repaint. Under `Wait` this is what produces a frame after
+    /// an event; under `Poll` the frame loop already requests one.
+    fn request_redraw(&self) {
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
     }
 
     /// Registers copy+move as accepted for `id` on `DragEntered` and
@@ -495,13 +534,15 @@ impl Runner {
         }
         self.accepted_transfer = Some(id);
         let platform = martensite_dnd::platform::WinitDndPlatform::new(event_loop);
-        let _ = platform.set_accepted_actions(
+        if let Err(err) = platform.set_accepted_actions(
             martensite_dnd::PlatformTransferId::new(id.into_raw()),
             &[
                 martensite_dnd::DropEffect::Copy,
                 martensite_dnd::DropEffect::Move,
             ],
-        );
+        ) {
+            tracing::debug!("martensite runner: set_accepted_actions failed: {err}");
+        }
     }
 
     /// Starts the payload fetch for a dropped transfer, trying URIs,
@@ -528,7 +569,7 @@ impl Runner {
         for ty in candidates {
             match event_loop.fetch_data_transfer(id, ty) {
                 Ok(serial) => {
-                    self.pending_drops.push(serial);
+                    push_bounded(&mut self.pending_drops, serial);
                     return true;
                 }
                 Err(err) => tracing::debug!("martensite runner: fetch {ty:?} rejected: {err}"),
@@ -673,6 +714,7 @@ impl ApplicationHandler for Runner {
                         o.set_frame_size(w, h);
                     }
                     self.needs_layout = true;
+                    self.request_redraw();
                 }
             }
             WindowEvent::ScaleFactorChanged { .. } => {
@@ -680,6 +722,7 @@ impl ApplicationHandler for Runner {
                     arena.set_scale_factor(window.scale_factor() as f32);
                 }
                 self.needs_layout = true;
+                self.request_redraw();
             }
             WindowEvent::ModifiersChanged(m) => {
                 self.mods = m.state();
@@ -693,6 +736,7 @@ impl ApplicationHandler for Runner {
                         self.router
                             .dispatch_pointer_event(arena, root, window.id(), &pe);
                     }
+                    self.request_redraw();
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -707,8 +751,10 @@ impl ApplicationHandler for Runner {
                 if let (Some(arena), Some(window)) = (self.arena.as_mut(), self.window.as_ref()) {
                     self.router.dispatch_scroll_event(arena, window.id(), d);
                 }
+                self.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                self.request_redraw();
                 let pressed = event.state == ElementState::Pressed;
                 let Some(key_name) = martensite_window::event::key_name(&event.logical_key) else {
                     return;
@@ -739,6 +785,7 @@ impl ApplicationHandler for Runner {
                 }
             }
             WindowEvent::Ime(ime) => {
+                self.request_redraw();
                 if let Some(ev) = ime_event_for_winit(&ime) {
                     if let (Some(arena), Some(root)) = (&mut self.arena, self.root) {
                         let focused = self.focus.current_focus().or(Some(root));
@@ -753,6 +800,7 @@ impl ApplicationHandler for Runner {
                 if !self.config.accept_drops {
                     return;
                 }
+                self.request_redraw();
                 // Accept copy+move so the OS shows a valid drop cursor.
                 if let WindowEvent::DragEntered { id, .. }
                 | WindowEvent::DragPosition { id, .. }
@@ -773,6 +821,12 @@ impl ApplicationHandler for Runner {
                     if !self.fetch_drop_payload(event_loop, *id) {
                         drop = Some(DropEvent::Left);
                     }
+                }
+                if matches!(
+                    event,
+                    WindowEvent::DragLeft { .. } | WindowEvent::DragDropped { .. }
+                ) {
+                    self.accepted_transfer = None;
                 }
                 if let (Some(drop), Some(arena), Some(root), Some(window)) =
                     (drop, self.arena.as_mut(), self.root, self.window.as_ref())
@@ -796,6 +850,7 @@ impl ApplicationHandler for Runner {
                     }
                 };
                 self.pending_drops.retain(|s| *s != serial);
+                self.request_redraw();
                 if let (Some(arena), Some(root), Some(window)) =
                     (self.arena.as_mut(), self.root, self.window.as_ref())
                 {
@@ -815,6 +870,9 @@ impl ApplicationHandler for Runner {
                     }
                 }
             }
+            WindowEvent::Focused(_)
+            | WindowEvent::PointerEntered { .. }
+            | WindowEvent::PointerLeft { .. } => self.request_redraw(),
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
                 let dt = now.saturating_duration_since(self.last_frame);
@@ -822,7 +880,8 @@ impl ApplicationHandler for Runner {
                 if self.needs_layout {
                     if let Some(window) = &self.window {
                         let size = window.surface_size();
-                        self.layout(size.width, size.height);
+                        let (w, h) = self.clamped_extent(size.width.max(1), size.height.max(1));
+                        self.layout(w, h);
                     }
                     self.needs_layout = false;
                 }
@@ -854,17 +913,74 @@ fn is_pending(err: &io::Error) -> bool {
     )
 }
 
+/// Rejects a drop payload whose total size exceeds `limit`.
+fn check_drop_len(len: usize, limit: usize) -> io::Result<()> {
+    if len > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "drop payload exceeds limit",
+        ));
+    }
+    Ok(())
+}
+
+/// Reads at most `limit` + 1 bytes from `reader`, so an oversize stream
+/// is detected without buffering all of it.
+fn read_capped(reader: Box<dyn io::BufRead>, limit: usize) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    check_drop_len(bytes.len(), limit)?;
+    Ok(bytes)
+}
+
 /// Reads a fetched transfer as the payload its type describes.
 fn drop_payload(value: &dyn TypedData) -> io::Result<DropPayload> {
     match value.type_().hint() {
         Some(TypeHint::UriList) => match value.try_as_file_paths() {
-            Ok(paths) => Ok(DropPayload::Files(paths)),
+            Ok(paths) => {
+                let total: usize = paths.iter().map(|p| p.as_os_str().len()).sum();
+                check_drop_len(total, MAX_DROP_PAYLOAD_BYTES)?;
+                Ok(DropPayload::Files(paths))
+            }
             Err(err) if is_pending(&err) => Err(err),
-            Err(_) => value.try_as_uris().map(DropPayload::Uris),
+            Err(_) => {
+                let uris = value.try_as_uris()?;
+                check_drop_len(uris.iter().map(String::len).sum(), MAX_DROP_PAYLOAD_BYTES)?;
+                Ok(DropPayload::Uris(uris))
+            }
         },
-        Some(TypeHint::Plaintext | TypeHint::Html) => value.try_as_string().map(DropPayload::Text),
-        _ => value.try_as_bytes().map(DropPayload::Bytes),
+        Some(TypeHint::Plaintext | TypeHint::Html) => match value.try_read() {
+            Some(reader) => {
+                let bytes = read_capped(reader, MAX_DROP_PAYLOAD_BYTES)?;
+                String::from_utf8(bytes)
+                    .map(DropPayload::Text)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+            }
+            None => {
+                let text = value.try_as_string()?;
+                check_drop_len(text.len(), MAX_DROP_PAYLOAD_BYTES)?;
+                Ok(DropPayload::Text(text))
+            }
+        },
+        _ => match value.try_read() {
+            Some(reader) => read_capped(reader, MAX_DROP_PAYLOAD_BYTES).map(DropPayload::Bytes),
+            None => {
+                let bytes = value.try_as_bytes()?;
+                check_drop_len(bytes.len(), MAX_DROP_PAYLOAD_BYTES)?;
+                Ok(DropPayload::Bytes(bytes))
+            }
+        },
     }
+}
+
+/// Pushes `serial`, evicting the oldest entry once `MAX_PENDING_DROPS`
+/// fetches are outstanding.
+fn push_bounded<T>(pending: &mut Vec<T>, serial: T) {
+    while pending.len() >= MAX_PENDING_DROPS {
+        pending.remove(0);
+        tracing::debug!("martensite runner: evicting oldest pending drop fetch");
+    }
+    pending.push(serial);
 }
 
 /// Runs the application until the window closes.
@@ -1030,6 +1146,7 @@ mod tests {
         pending: bool,
         uris: Vec<String>,
         text: String,
+        stream: Option<Vec<u8>>,
     }
 
     impl TypedData for FakeData {
@@ -1038,7 +1155,8 @@ mod tests {
         }
 
         fn try_read(&self) -> Option<Box<dyn io::BufRead>> {
-            None
+            let bytes = self.stream.clone()?;
+            Some(Box::new(io::Cursor::new(bytes)))
         }
 
         fn try_as_uris(&self) -> io::Result<Vec<String>> {
@@ -1062,6 +1180,7 @@ mod tests {
             pending: false,
             uris: Vec::new(),
             text: String::new(),
+            stream: None,
         }
     }
 
@@ -1118,5 +1237,48 @@ mod tests {
         }))
         .expect_err("no byte source");
         assert!(!is_pending(&err));
+    }
+
+    #[test]
+    fn read_capped_rejects_stream_over_limit() {
+        let over: Box<dyn io::BufRead> = Box::new(io::Cursor::new(vec![0u8; 5]));
+        let err = read_capped(over, 4).expect_err("oversize payload");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(!is_pending(&err));
+        let at: Box<dyn io::BufRead> = Box::new(io::Cursor::new(vec![0u8; 4]));
+        assert_eq!(read_capped(at, 4).expect("at limit").len(), 4);
+    }
+
+    #[test]
+    fn drop_payload_stream_under_limit_is_read() {
+        let data = FakeData {
+            stream: Some(b"hi".to_vec()),
+            ..fake(TypeHint::Plaintext)
+        };
+        assert!(matches!(
+            drop_payload(&data),
+            Ok(DropPayload::Text(t)) if t == "hi"
+        ));
+    }
+
+    #[test]
+    fn drop_payload_invalid_utf8_text_is_rejected() {
+        let data = FakeData {
+            stream: Some(vec![0xff, 0xfe]),
+            ..fake(TypeHint::Plaintext)
+        };
+        let err = drop_payload(&data).expect_err("invalid utf-8");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn push_bounded_evicts_oldest_beyond_limit() {
+        let mut pending = Vec::new();
+        for serial in 0..(MAX_PENDING_DROPS as u32 + 2) {
+            push_bounded(&mut pending, serial);
+        }
+        assert_eq!(pending.len(), MAX_PENDING_DROPS);
+        assert_eq!(pending.first(), Some(&2));
+        assert_eq!(pending.last(), Some(&(MAX_PENDING_DROPS as u32 + 1)));
     }
 }
