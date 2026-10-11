@@ -81,6 +81,58 @@ pub(crate) const LOGICAL_WIDTH: u32 = 1280;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub(crate) const LOGICAL_HEIGHT: u32 = 860;
 
+/// Test-only texture-limit override for the web build: the page URL's
+/// `?clamp_limit=<u32>` query parameter, read once. Lets the browser
+/// gate exercise the surface-clamp path on adapters whose real
+/// `max_texture_dimension_2d` is far above the canvas extent.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn clamp_limit_override() -> Option<u32> {
+    static LIMIT: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        web_sys::window()
+            .and_then(|window| window.location().search().ok())
+            .filter(|search| search.len() > 1)
+            .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search).ok())
+            .and_then(|params| params.get("clamp_limit"))
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .filter(|&limit| limit > 0)
+    })
+}
+
+/// Native builds carry no clamp override.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn clamp_limit_override() -> Option<u32> {
+    None
+}
+
+/// The texture extent the surface is clamped to: the device limit, or
+/// the test-only [`clamp_limit_override`] when that is smaller (an
+/// override can only tighten the clamp, never exceed the device).
+fn effective_texture_limit(device_limit: u32) -> u32 {
+    match clamp_limit_override() {
+        Some(limit) if limit < device_limit => limit,
+        _ => device_limit,
+    }
+}
+
+/// Re-parents the a11y mirror container under the page's
+/// `#martensite-canvas-host` wrapper (a `position:relative` box hugging
+/// the canvas), so the mirror's `left:0;top:0` origin is the canvas's
+/// top-left corner rather than the document origin — the canvas is
+/// centered in the page, and node bounds are canvas-relative. Without
+/// the wrapper the container stays where the bridge appended it.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn anchor_a11y_mirror(container: &web_sys::HtmlElement) {
+    let host = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id("martensite-canvas-host"));
+    if let Some(host) = host {
+        if let Err(err) = host.append_child(container) {
+            crate::web::log(&format!("a11y mirror anchor failed: {err:?}"));
+        }
+    }
+}
+
 /// Wall clock in milliseconds.
 ///
 /// The web arm reads `performance.now()`: `std::time::Instant::now`
@@ -446,9 +498,45 @@ impl App {
             Some(gpu) => martensite_wgpu::surface::clamp_extent(
                 width,
                 height,
-                gpu.device.limits().max_texture_dimension_2d,
+                effective_texture_limit(gpu.device.limits().max_texture_dimension_2d),
             ),
             None => (width, height),
+        }
+    }
+
+    /// Per-axis factor mapping raw surface pixels (where pointer
+    /// positions arrive) onto the clamped extent the arena is laid out
+    /// in — `(1.0, 1.0)` whenever no clamp is in effect.
+    fn pointer_to_layout_scale(&self) -> (f32, f32) {
+        let Some(window) = &self.window else {
+            return (1.0, 1.0);
+        };
+        let size = window.surface_size();
+        let raw = (size.width, size.height);
+        martensite::window::dpi::surface_to_layout_scale(
+            raw,
+            self.clamped_surface_size(raw.0, raw.1),
+        )
+    }
+
+    /// Keeps the web a11y mirror's geometry aligned with the painted
+    /// canvas: node bounds are clamped layout pixels, the mirror is
+    /// positioned in CSS pixels, so the bridge scales by
+    /// `css / clamped` per axis (`css = raw / devicePixelRatio`).
+    /// Called every frame — the bridge ignores an unchanged factor.
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    fn sync_web_a11y_scale(&mut self) {
+        let Some(window) = &self.window else { return };
+        let size = window.surface_size();
+        let (cw, ch) = self.clamped_surface_size(size.width, size.height);
+        let dpr = window.scale_factor();
+        if cw == 0 || ch == 0 || !(dpr.is_finite() && dpr > 0.0) {
+            return;
+        }
+        let sx = f64::from(size.width) / dpr / f64::from(cw);
+        let sy = f64::from(size.height) / dpr / f64::from(ch);
+        if let Some(bridge) = &mut self.a11y_bridge {
+            bridge.set_css_scale(sx, sy);
         }
     }
 
@@ -563,7 +651,7 @@ impl App {
             Some(gpu) => martensite_wgpu::surface::clamp_extent(
                 size.width.max(1),
                 size.height.max(1),
-                gpu.device.limits().max_texture_dimension_2d,
+                effective_texture_limit(gpu.device.limits().max_texture_dimension_2d),
             ),
             None => (size.width.max(1), size.height.max(1)),
         };
@@ -632,7 +720,7 @@ impl App {
                         let (w, h) = martensite_wgpu::surface::clamp_extent(
                             size.width.max(1),
                             size.height.max(1),
-                            gpu.device.limits().max_texture_dimension_2d,
+                            effective_texture_limit(gpu.device.limits().max_texture_dimension_2d),
                         );
                         match surface.resize(&gpu.device, w, h) {
                             Ok(()) => {
@@ -697,6 +785,7 @@ impl App {
         tree.set_focus(self.focus.lock().unwrap().current_focus());
         match martensite_web::access::WebA11yBridge::new() {
             Ok(mut bridge) => {
+                anchor_a11y_mirror(&bridge.container());
                 let queue = Arc::clone(&self.a11y_actions);
                 bridge.set_action_handler(move |request| {
                     queue.lock().unwrap().push(request);
@@ -761,6 +850,8 @@ impl App {
             session.on_frame(&list);
             session.absorb_events(self.router.event_ledger());
         }
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+        self.sync_web_a11y_scale();
         self.pump_a11y();
 
         #[cfg(all(target_arch = "wasm32", target_os = "unknown", feature = "web-dev"))]
@@ -856,6 +947,12 @@ impl App {
     /// winit pointer event → `EventRouter` → arena dispatch.
     /// Identical on both targets: `ClickTracker` inside
     /// `dispatch_pointer_event` runs on a wasm-safe clock.
+    ///
+    /// `position` arrives in raw surface pixels; when the surface is
+    /// clamped to the GPU texture limit the arena is laid out in the
+    /// smaller clamped extent, so the position is rescaled into layout
+    /// space first (identity when no clamp is in effect). Every pointer
+    /// entry point funnels through here.
     fn dispatch_pointer(
         &mut self,
         position: winit::dpi::PhysicalPosition<f64>,
@@ -869,10 +966,11 @@ impl App {
         if self.mods.control_key() {
             mods |= ModifierKeys::CONTROL;
         }
+        let (sx, sy) = self.pointer_to_layout_scale();
         let ev = PointerEvent {
             pointer_id: PointerId::PRIMARY,
             kind: PointerKind::Mouse,
-            position: Vec2::new(position.x as f32, position.y as f32),
+            position: Vec2::new(position.x as f32 * sx, position.y as f32 * sy),
             state,
             button,
             modifiers: mods,

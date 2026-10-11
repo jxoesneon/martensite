@@ -732,20 +732,31 @@ fn attr_ops<'a>(
 /// against the nearest positioned ancestor (the parent mirror
 /// element). Nodes without positive-size bounds collapse to a
 /// zero-size element at that origin — still present in the a11y tree.
-fn mirror_style(bounds: Option<Rect>, origin: (f64, f64), clip: bool) -> String {
+///
+/// `bounds` and `origin` are in layout pixels; `scale` is the per-axis
+/// layout-px → CSS-px factor applied to the emitted offsets and sizes
+/// (the parent-relative subtraction is linear, so scaling after it is
+/// equivalent to scaling both operands).
+fn mirror_style(bounds: Option<Rect>, origin: (f64, f64), clip: bool, scale: (f64, f64)) -> String {
     match bounds {
         Some(b) if b.width() > 0.0 && b.height() > 0.0 => {
             let overflow = if clip { "hidden" } else { "visible" };
             format!(
                 "{MIRROR_STYLE_BASE}left:{}px;top:{}px;width:{}px;height:{}px;overflow:{overflow};",
-                b.x0 - origin.0,
-                b.y0 - origin.1,
-                b.width(),
-                b.height(),
+                (b.x0 - origin.0) * scale.0,
+                (b.y0 - origin.1) * scale.1,
+                b.width() * scale.0,
+                b.height() * scale.1,
             )
         }
         _ => format!("{MIRROR_STYLE_BASE}left:0;top:0;width:0;height:0;overflow:visible;"),
     }
+}
+
+/// Whether `(sx, sy)` is a usable layout-px → CSS-px factor: both axes
+/// finite and strictly positive.
+fn valid_css_scale(sx: f64, sy: f64) -> bool {
+    sx.is_finite() && sx > 0.0 && sy.is_finite() && sy > 0.0
 }
 
 /// Per-node mirror state.
@@ -1047,6 +1058,11 @@ struct Inner {
     /// activation so the first enabled frame materializes the complete
     /// tree rather than only the nodes changed since enablement.
     pending: Option<TreeUpdate>,
+    /// Per-axis layout-px → CSS-px factor applied when node bounds
+    /// become mirror `left`/`top`/`width`/`height` (see
+    /// [`WebA11yBridge::set_css_scale`]). `(1.0, 1.0)` writes bounds
+    /// verbatim.
+    css_scale: (f64, f64),
     /// The document used to create elements.
     document: Document,
 }
@@ -1313,6 +1329,39 @@ impl WebA11yBridge {
         self.inner.borrow_mut().dom_focus_enabled = enabled;
     }
 
+    /// Sets the per-axis factor converting node bounds (layout pixels)
+    /// into CSS pixels for the mirror elements' `left`/`top`/`width`/
+    /// `height`.
+    ///
+    /// AccessKit bounds are in the app's layout space — typically
+    /// physical canvas pixels, possibly further shrunk when the surface
+    /// is clamped to the GPU's texture limit — while the mirror is
+    /// positioned in CSS pixels. Pass `css_extent / layout_extent` per
+    /// axis (e.g. `1 / devicePixelRatio` for an unclamped HiDPI canvas).
+    /// The default `(1.0, 1.0)` writes bounds verbatim. Non-finite or
+    /// non-positive factors are ignored. A changed factor re-positions
+    /// the live mirror immediately; style writes stay diffed, so calling
+    /// this every frame with an unchanged value touches no DOM.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn example(bridge: &mut martensite_access::web::WebA11yBridge) {
+    /// // 2× HiDPI canvas laid out in physical pixels.
+    /// bridge.set_css_scale(0.5, 0.5);
+    /// # }
+    /// ```
+    pub fn set_css_scale(&mut self, sx: f64, sy: f64) {
+        if !valid_css_scale(sx, sy) {
+            return;
+        }
+        let mut inner = self.inner.borrow_mut();
+        if inner.css_scale != (sx, sy) {
+            inner.css_scale = (sx, sy);
+            inner.refresh_positions();
+        }
+    }
+
     /// Mirrors `node_id` as the DOM-focused element: `tabindex="0"`
     /// (subject to composite roving/managed rules) and `element.focus()`.
     /// When the focused node is a managed member of an
@@ -1500,6 +1549,7 @@ impl WebA11yBridgeBuilder {
             dom_focus_enabled: true,
             enabled: self.enabled,
             pending: None,
+            css_scale: (1.0, 1.0),
             document,
         }));
 
@@ -1924,12 +1974,13 @@ impl Inner {
         for id in ids {
             self.resolve_origin(id, &mut origins);
         }
+        let scale = self.css_scale;
         for entry in self.entries.values_mut() {
             let parent_origin = entry
                 .parent
                 .and_then(|p| origins.get(&p).copied())
                 .unwrap_or((0.0, 0.0));
-            let style = mirror_style(entry.bounds, parent_origin, entry.clips_children);
+            let style = mirror_style(entry.bounds, parent_origin, entry.clips_children, scale);
             if entry.applied_style.as_deref() != Some(style.as_str())
                 && entry.element.set_attribute("style", &style).is_ok()
             {
@@ -2283,24 +2334,74 @@ mod tests {
     #[test]
     fn mirror_style_positions_relative_to_parent_origin() {
         let bounds = Rect::new(30.0, 40.0, 130.0, 80.0);
-        let style = mirror_style(Some(bounds), (10.0, 10.0), false);
+        let style = mirror_style(Some(bounds), (10.0, 10.0), false, (1.0, 1.0));
         assert!(style.contains("left:20px"));
         assert!(style.contains("top:30px"));
         assert!(style.contains("width:100px"));
         assert!(style.contains("height:40px"));
         assert!(style.contains("opacity:0"));
         assert!(style.contains("overflow:visible"));
-        let clipped = mirror_style(Some(bounds), (10.0, 10.0), true);
+        let clipped = mirror_style(Some(bounds), (10.0, 10.0), true, (1.0, 1.0));
         assert!(clipped.contains("overflow:hidden"));
     }
 
     #[test]
     fn mirror_style_collapses_unbounded_nodes() {
-        let style = mirror_style(None, (5.0, 5.0), false);
+        let style = mirror_style(None, (5.0, 5.0), false, (1.0, 1.0));
         assert!(style.contains("width:0"));
         assert!(style.contains("height:0"));
-        let zero = mirror_style(Some(Rect::new(0.0, 0.0, 0.0, 0.0)), (0.0, 0.0), false);
+        let zero = mirror_style(
+            Some(Rect::new(0.0, 0.0, 0.0, 0.0)),
+            (0.0, 0.0),
+            false,
+            (2.0, 2.0),
+        );
         assert!(zero.contains("width:0"));
+    }
+
+    #[test]
+    fn mirror_style_applies_css_scale_per_axis() {
+        // Layout px → CSS px at DPR 2 (×0.5) horizontally and a clamp
+        // ratio of ×2 vertically: offsets and sizes both scale.
+        let bounds = Rect::new(30.0, 40.0, 130.0, 80.0);
+        let style = mirror_style(Some(bounds), (10.0, 10.0), false, (0.5, 2.0));
+        assert!(style.contains("left:10px"), "{style}");
+        assert!(style.contains("top:60px"), "{style}");
+        assert!(style.contains("width:50px"), "{style}");
+        assert!(style.contains("height:80px"), "{style}");
+    }
+
+    #[test]
+    fn mirror_style_scaled_offsets_compose_through_nesting() {
+        // A child's absolute CSS position is the sum of the scaled
+        // parent-relative offsets — identical to scaling its absolute
+        // layout position directly.
+        let scale = (2.148_437_5, 2.148_760_3);
+        let parent = Rect::new(100.0, 50.0, 400.0, 300.0);
+        let child = Rect::new(120.0, 80.0, 160.0, 100.0);
+        let parse = |style: &str, key: &str| -> f64 {
+            let start = style.find(key).expect("key present") + key.len();
+            let rest = &style[start..];
+            rest[..rest.find("px").expect("px suffix")]
+                .parse()
+                .expect("number")
+        };
+        let p = mirror_style(Some(parent), (0.0, 0.0), false, scale);
+        let c = mirror_style(Some(child), (parent.x0, parent.y0), false, scale);
+        let abs_x = parse(&p, "left:") + parse(&c, "left:");
+        let abs_y = parse(&p, "top:") + parse(&c, "top:");
+        assert!((abs_x - child.x0 * scale.0).abs() < 1e-9);
+        assert!((abs_y - child.y0 * scale.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn css_scale_validation_rejects_degenerate_factors() {
+        assert!(valid_css_scale(1.0, 1.0));
+        assert!(valid_css_scale(0.5, 2.25));
+        assert!(!valid_css_scale(0.0, 1.0));
+        assert!(!valid_css_scale(1.0, -1.0));
+        assert!(!valid_css_scale(f64::NAN, 1.0));
+        assert!(!valid_css_scale(1.0, f64::INFINITY));
     }
 
     #[test]

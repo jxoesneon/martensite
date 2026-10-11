@@ -29,6 +29,10 @@
         align-items: center;
         justify-content: center;
       }
+      #martensite-canvas-host {
+        position: relative;
+        line-height: 0;
+      }
       /* Logical size matches app::LOGICAL_WIDTH/HEIGHT; the wasm side
          scales the backing store by devicePixelRatio. */
       #martensite-canvas {
@@ -77,7 +81,14 @@
       by id in `start()`.
     -->
     <div id="app">
-      <canvas id="martensite-canvas" width="1280" height="860" tabindex="0"></canvas>
+      <!--
+        The host hugs the canvas and anchors the accessibility mirror:
+        the wasm side re-parents the mirror container in here, so
+        mirror elements are positioned relative to the canvas corner.
+      -->
+      <div id="martensite-canvas-host">
+        <canvas id="martensite-canvas" width="1280" height="860" tabindex="0"></canvas>
+      </div>
       <div id="loading" aria-hidden="true">
         <div class="spinner"></div>
         <div>Loading the Martensite widget catalog…</div>
