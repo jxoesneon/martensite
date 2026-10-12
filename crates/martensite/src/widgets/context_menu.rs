@@ -71,6 +71,9 @@ pub struct ContextMenu {
     /// keyboard contract; the WCAG 2.4.13 ring marks the wrapped
     /// bounds via `paint_overlay`.
     focused: bool,
+    /// When false a secondary press belongs to the child — the trigger
+    /// is inert (e.g. a tool state where no menu exists yet).
+    enabled: bool,
 }
 
 impl ContextMenu {
@@ -95,7 +98,26 @@ impl ContextMenu {
             last_pointer: None,
             text_painter: None,
             focused: false,
+            enabled: true,
         }
+    }
+
+    /// Enables or disables the trigger. Disabled, a secondary press
+    /// forwards to the child like any other input and `open()`/`open_at`
+    /// do nothing — the popup never appears.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{ContextMenu, MenuItem, Text};
+    ///
+    /// let mut menu = ContextMenu::new(Text::new("c"), vec![MenuItem::action("A")]);
+    /// menu.set_enabled(false);
+    /// menu.open_at(glam::Vec2::new(4.0, 4.0));
+    /// assert!(!menu.is_open());
+    /// ```
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 
     /// Shares a [`crate::text_paint::TextPainter`] so popup rows emit
@@ -190,6 +212,9 @@ impl ContextMenu {
     /// assert!(menu.is_open());
     /// ```
     pub fn open_at(&mut self, position: Vec2) {
+        if !self.enabled {
+            return;
+        }
         self.last_pointer = Some(position);
         self.stack.open_at(OverlayAnchor::Pointer(position), false);
     }
@@ -207,6 +232,9 @@ impl ContextMenu {
     /// assert!(menu.is_open());
     /// ```
     pub fn open(&mut self) {
+        if !self.enabled {
+            return;
+        }
         let position = self.last_pointer.unwrap_or_else(|| {
             Vec2::new(
                 self.cached_bounds.min_x() + self.cached_bounds.width() / 2.0,
@@ -245,6 +273,25 @@ impl ContextMenu {
     /// ```
     pub fn take_activated(&mut self) -> Option<MenuPath> {
         self.stack.take_activated()
+    }
+
+    /// Writes a root-row activation as a menu click would — the owner's
+    /// next [`take_activated`](Self::take_activated) returns `[row]`.
+    /// Separators and disabled rows do nothing, like a real pick.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use martensite::widgets::{ContextMenu, MenuItem, Text};
+    ///
+    /// let mut menu = ContextMenu::new(Text::new("c"), vec![MenuItem::action("A")]);
+    /// menu.activate_for_test(0);
+    /// assert_eq!(menu.take_activated(), Some(vec![0]));
+    /// ```
+    pub fn activate_for_test(&mut self, row: usize) {
+        if let Ok(mut state) = self.stack.shared().lock() {
+            state.activate_for_test(row);
+        }
     }
 }
 
@@ -323,7 +370,7 @@ impl Widget for ContextMenu {
                 position,
                 button: PointerButton::Secondary,
                 ..
-            } => {
+            } if self.enabled => {
                 self.open_at(*position);
                 return EventResponse::CaptureFocus;
             }
@@ -491,6 +538,24 @@ mod tests {
         };
         assert_eq!(event(&mut m, &press), EventResponse::CaptureFocus);
         assert!(m.is_open());
+    }
+
+    /// A disabled trigger neither opens on a secondary press nor on
+    /// `open_at` — the press forwards to the child like any input.
+    #[test]
+    fn disabled_trigger_stays_inert() {
+        let mut m = menu();
+        laid_out(&mut m);
+        m.set_enabled(false);
+        let press = WidgetEvent::PointerPressed {
+            position: Vec2::new(50.0, 40.0),
+            button: PointerButton::Secondary,
+            count: 1,
+        };
+        assert_ne!(event(&mut m, &press), EventResponse::CaptureFocus);
+        assert!(!m.is_open());
+        m.open_at(Vec2::new(50.0, 40.0));
+        assert!(!m.is_open());
     }
 
     #[test]
