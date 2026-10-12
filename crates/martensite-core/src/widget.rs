@@ -441,6 +441,16 @@ pub enum WidgetEvent {
         /// Scroll delta in the same space as `position` (positive = content up/right).
         delta: Vec2,
     },
+    /// A two-finger touchpad pinch over the widget's bounds (winit
+    /// `WindowEvent::PinchGesture`; macOS, iOS and Wayland).
+    Pinch {
+        /// Window-space position — the tracked pointer; the OS event carries
+        /// no coordinates of its own.
+        position: Vec2,
+        /// Incremental magnification: positive zooms in, negative out. The
+        /// scale factor for the frame is `1.0 + delta`.
+        delta: f64,
+    },
     /// A key was pressed while the widget held focus.
     KeyPressed {
         /// The logical key name (e.g. `"Enter"`, `"a"`, `"Space"`).

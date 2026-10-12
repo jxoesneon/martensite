@@ -1381,11 +1381,41 @@ impl EventRouter {
         window_id: WindowId,
         delta: Vec2,
     ) -> Option<EventResponse> {
+        self.dispatch_positioned(arena, window_id, |position| WidgetEvent::Scroll {
+            position,
+            delta,
+        })
+    }
+
+    /// Routes a two-finger touchpad pinch to the hovered widget and delivers
+    /// it as [`WidgetEvent::Pinch`] at the tracked pointer position (the OS
+    /// event carries no coordinates). Shares the scroll routing: overlay
+    /// first, then the hovered widget. Returns `None` when nothing is
+    /// hovered.
+    pub fn dispatch_pinch_event(
+        &mut self,
+        arena: &mut WidgetArena,
+        window_id: WindowId,
+        delta: f64,
+    ) -> Option<EventResponse> {
+        self.dispatch_positioned(arena, window_id, |position| WidgetEvent::Pinch {
+            position,
+            delta,
+        })
+    }
+
+    /// The shared hover-routed delivery for `Scroll`/`Pinch`: position comes
+    /// from the pointer tracker, `make` wraps it into the concrete event.
+    fn dispatch_positioned(
+        &mut self,
+        arena: &mut WidgetArena,
+        window_id: WindowId,
+        make: impl Fn(Vec2) -> WidgetEvent,
+    ) -> Option<EventResponse> {
         let position = self.mouse.position(window_id).unwrap_or(Vec2::ZERO);
+        let event = make(position);
         // Scroll over a popup goes to the popup (e.g. a long listbox).
-        let overlay_response = arena
-            .overlay_mut()
-            .dispatch_event(&WidgetEvent::Scroll { position, delta });
+        let overlay_response = arena.overlay_mut().dispatch_event(&event);
         if overlay_response != EventResponse::Ignored {
             self.drain_focus(arena);
             #[cfg(feature = "devtools")]
@@ -1410,7 +1440,7 @@ impl EventRouter {
         // the last pointer event is a stale target. Drop it (and the
         // stale hover) rather than deliver into a suppressed subtree
         // (ADR-0040).
-        let outcome = match self.route_scroll_event(window_id, delta) {
+        let outcome = match self.route_scroll_event(window_id, Vec2::ZERO) {
             EventDispatchOutcome::Handled(id) if loading_covered(arena, id) => {
                 self.mouse.set_hovered(window_id, None);
                 EventDispatchOutcome::Unhandled
@@ -1419,8 +1449,7 @@ impl EventRouter {
         };
         match outcome {
             EventDispatchOutcome::Handled(id) => {
-                let response =
-                    arena.dispatch_event_ex(id, &WidgetEvent::Scroll { position, delta });
+                let response = arena.dispatch_event_ex(id, &event);
                 self.drain_focus(arena);
                 #[cfg(feature = "devtools")]
                 if self.is_ledger_enabled() {
