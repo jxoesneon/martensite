@@ -651,17 +651,17 @@ mod gate_4k120 {
         if stats.hardware_accelerated() {
             assert!(
                 drop_pct < MAX_LOSS_PCT,
-                "4k120 {}: queue drop rate {drop_pct:.3}% exceeds {MAX_LOSS_PCT}%",
+                "4k120 {}: queue drop rate {drop_pct:.3}% is not less than {MAX_LOSS_PCT}%",
                 leg.name
             );
             assert!(
                 loss_pct < MAX_LOSS_PCT,
-                "4k120 {}: combined loss {loss_pct:.3}% exceeds {MAX_LOSS_PCT}%",
+                "4k120 {}: combined loss {loss_pct:.3}% is not less than {MAX_LOSS_PCT}%",
                 leg.name
             );
             assert!(
                 cpu_pct < MAX_CPU_PCT,
-                "4k120 {}: queue CPU utilization {cpu_pct:.3}% exceeds {MAX_CPU_PCT}%",
+                "4k120 {}: queue CPU utilization {cpu_pct:.3}% is not less than {MAX_CPU_PCT}%",
                 leg.name
             );
             assert!(
